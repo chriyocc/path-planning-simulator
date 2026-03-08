@@ -1,6 +1,6 @@
 # RoboSurvivor 2026 Strategy Simulator
 
-Web + TypeScript topological simulator for RoboSurvivor 2026.
+Web + TypeScript topological simulator for RoboSurvivor 2026
 
 ## What it includes
 - Deterministic map graph and line-type edges.
