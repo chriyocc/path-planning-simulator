@@ -348,7 +348,7 @@ export function createDefaultSimulationConfig(map: Graph): SimulationConfig {
         SOLID: 320,
         DASHED: 250,
         ZIGZAG: 220,
-        SINE: 280
+        SINE: 300
       },
       turn_penalty_s: {
         NONE: 0,
