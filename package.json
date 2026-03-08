@@ -1,0 +1,25 @@
+{
+  "name": "robosurvivor-2026-simulator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "generate:artifacts": "tsx src/generateArtifacts.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.1",
+    "@types/seedrandom": "^3.0.8",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "seedrandom": "^3.0.5"
+  }
+}

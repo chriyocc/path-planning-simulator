@@ -1,0 +1,316 @@
+[
+  {
+    "from_node": "START",
+    "to_node": "LOCK_RED",
+    "turn_sequence": [
+      "START",
+      "J_MAIN",
+      "ENTRY_RED",
+      "LOCK_RED"
+    ],
+    "expected_segment_time_s": 5.388
+  },
+  {
+    "from_node": "LOCK_RED",
+    "to_node": "BLACK_ZONE",
+    "turn_sequence": [
+      "LOCK_RED",
+      "ENTRY_RED",
+      "J_MAIN",
+      "J_TOP",
+      "BLACK_ZONE"
+    ],
+    "expected_segment_time_s": 7.244
+  },
+  {
+    "from_node": "BLACK_ZONE",
+    "to_node": "LOCK_YELLOW",
+    "turn_sequence": [
+      "BLACK_ZONE",
+      "J_TOP",
+      "J_MAIN",
+      "ENTRY_YELLOW",
+      "LOCK_YELLOW"
+    ],
+    "expected_segment_time_s": 6.647
+  },
+  {
+    "from_node": "LOCK_YELLOW",
+    "to_node": "BLACK_ZONE",
+    "turn_sequence": [
+      "LOCK_YELLOW",
+      "ENTRY_YELLOW",
+      "J_MAIN",
+      "J_TOP",
+      "BLACK_ZONE"
+    ],
+    "expected_segment_time_s": 6.647
+  },
+  {
+    "from_node": "BLACK_ZONE",
+    "to_node": "LOCK_BLUE",
+    "turn_sequence": [
+      "BLACK_ZONE",
+      "J_TOP",
+      "J_MAIN",
+      "ENTRY_BLUE",
+      "LOCK_BLUE"
+    ],
+    "expected_segment_time_s": 6.754
+  },
+  {
+    "from_node": "LOCK_BLUE",
+    "to_node": "BLACK_ZONE",
+    "turn_sequence": [
+      "LOCK_BLUE",
+      "ENTRY_BLUE",
+      "J_MAIN",
+      "J_TOP",
+      "BLACK_ZONE"
+    ],
+    "expected_segment_time_s": 6.754
+  },
+  {
+    "from_node": "BLACK_ZONE",
+    "to_node": "LOCK_GREEN",
+    "turn_sequence": [
+      "BLACK_ZONE",
+      "J_TOP",
+      "J_MAIN",
+      "ENTRY_GREEN",
+      "LOCK_GREEN"
+    ],
+    "expected_segment_time_s": 7.514
+  },
+  {
+    "from_node": "LOCK_GREEN",
+    "to_node": "BLACK_ZONE",
+    "turn_sequence": [
+      "LOCK_GREEN",
+      "ENTRY_GREEN",
+      "J_MAIN",
+      "J_TOP",
+      "BLACK_ZONE"
+    ],
+    "expected_segment_time_s": 7.514
+  },
+  {
+    "from_node": "BLACK_ZONE",
+    "to_node": "R_RED_1",
+    "turn_sequence": [
+      "BLACK_ZONE",
+      "J_TOP",
+      "J_MAIN",
+      "ENTRY_RED",
+      "LOCK_RED",
+      "R_RED_1"
+    ],
+    "expected_segment_time_s": 7.663
+  },
+  {
+    "from_node": "R_RED_1",
+    "to_node": "ZONE_RED",
+    "turn_sequence": [
+      "R_RED_1",
+      "LOCK_RED",
+      "ENTRY_RED",
+      "J_MAIN",
+      "J_TOP",
+      "ZONE_RED"
+    ],
+    "expected_segment_time_s": 6.788
+  },
+  {
+    "from_node": "ZONE_RED",
+    "to_node": "R_RED_2",
+    "turn_sequence": [
+      "ZONE_RED",
+      "J_TOP",
+      "J_MAIN",
+      "ENTRY_RED",
+      "LOCK_RED",
+      "R_RED_2"
+    ],
+    "expected_segment_time_s": 6.788
+  },
+  {
+    "from_node": "R_RED_2",
+    "to_node": "ZONE_GREEN",
+    "turn_sequence": [
+      "R_RED_2",
+      "LOCK_RED",
+      "ENTRY_RED",
+      "J_MAIN",
+      "J_TOP",
+      "ZONE_GREEN"
+    ],
+    "expected_segment_time_s": 6.788
+  },
+  {
+    "from_node": "ZONE_GREEN",
+    "to_node": "R_YELLOW_1",
+    "turn_sequence": [
+      "ZONE_GREEN",
+      "J_TOP",
+      "J_MAIN",
+      "ENTRY_YELLOW",
+      "LOCK_YELLOW",
+      "R_YELLOW_1"
+    ],
+    "expected_segment_time_s": 6.29
+  },
+  {
+    "from_node": "R_YELLOW_1",
+    "to_node": "ZONE_BLUE",
+    "turn_sequence": [
+      "R_YELLOW_1",
+      "LOCK_YELLOW",
+      "ENTRY_YELLOW",
+      "J_MAIN",
+      "J_TOP",
+      "ZONE_BLUE"
+    ],
+    "expected_segment_time_s": 6.165
+  },
+  {
+    "from_node": "ZONE_BLUE",
+    "to_node": "R_YELLOW_2",
+    "turn_sequence": [
+      "ZONE_BLUE",
+      "J_TOP",
+      "J_MAIN",
+      "ENTRY_YELLOW",
+      "LOCK_YELLOW",
+      "R_YELLOW_2"
+    ],
+    "expected_segment_time_s": 6.165
+  },
+  {
+    "from_node": "R_YELLOW_2",
+    "to_node": "ZONE_GREEN",
+    "turn_sequence": [
+      "R_YELLOW_2",
+      "LOCK_YELLOW",
+      "ENTRY_YELLOW",
+      "J_MAIN",
+      "J_TOP",
+      "ZONE_GREEN"
+    ],
+    "expected_segment_time_s": 6.29
+  },
+  {
+    "from_node": "ZONE_GREEN",
+    "to_node": "R_BLUE_1",
+    "turn_sequence": [
+      "ZONE_GREEN",
+      "J_TOP",
+      "J_MAIN",
+      "ENTRY_BLUE",
+      "LOCK_BLUE",
+      "R_BLUE_1"
+    ],
+    "expected_segment_time_s": 6.371
+  },
+  {
+    "from_node": "R_BLUE_1",
+    "to_node": "ZONE_RED",
+    "turn_sequence": [
+      "R_BLUE_1",
+      "LOCK_BLUE",
+      "ENTRY_BLUE",
+      "J_MAIN",
+      "J_TOP",
+      "ZONE_RED"
+    ],
+    "expected_segment_time_s": 6.371
+  },
+  {
+    "from_node": "ZONE_RED",
+    "to_node": "R_BLUE_2",
+    "turn_sequence": [
+      "ZONE_RED",
+      "J_TOP",
+      "J_MAIN",
+      "ENTRY_BLUE",
+      "LOCK_BLUE",
+      "R_BLUE_2"
+    ],
+    "expected_segment_time_s": 6.371
+  },
+  {
+    "from_node": "R_BLUE_2",
+    "to_node": "ZONE_BLUE",
+    "turn_sequence": [
+      "R_BLUE_2",
+      "LOCK_BLUE",
+      "ENTRY_BLUE",
+      "J_MAIN",
+      "J_TOP",
+      "ZONE_BLUE"
+    ],
+    "expected_segment_time_s": 6.246
+  },
+  {
+    "from_node": "ZONE_BLUE",
+    "to_node": "R_GREEN_1",
+    "turn_sequence": [
+      "ZONE_BLUE",
+      "J_TOP",
+      "J_MAIN",
+      "ENTRY_GREEN",
+      "LOCK_GREEN",
+      "R_GREEN_1"
+    ],
+    "expected_segment_time_s": 6.994
+  },
+  {
+    "from_node": "R_GREEN_1",
+    "to_node": "ZONE_YELLOW",
+    "turn_sequence": [
+      "R_GREEN_1",
+      "LOCK_GREEN",
+      "ENTRY_GREEN",
+      "J_MAIN",
+      "J_TOP",
+      "ZONE_YELLOW"
+    ],
+    "expected_segment_time_s": 6.994
+  },
+  {
+    "from_node": "ZONE_YELLOW",
+    "to_node": "R_GREEN_2",
+    "turn_sequence": [
+      "ZONE_YELLOW",
+      "J_TOP",
+      "J_MAIN",
+      "ENTRY_GREEN",
+      "LOCK_GREEN",
+      "R_GREEN_2"
+    ],
+    "expected_segment_time_s": 6.994
+  },
+  {
+    "from_node": "R_GREEN_2",
+    "to_node": "ZONE_YELLOW",
+    "turn_sequence": [
+      "R_GREEN_2",
+      "LOCK_GREEN",
+      "ENTRY_GREEN",
+      "J_MAIN",
+      "J_TOP",
+      "ZONE_YELLOW"
+    ],
+    "expected_segment_time_s": 6.994
+  },
+  {
+    "from_node": "ZONE_YELLOW",
+    "to_node": "START",
+    "turn_sequence": [
+      "ZONE_YELLOW",
+      "J_TOP",
+      "J_MAIN",
+      "START"
+    ],
+    "expected_segment_time_s": 6.131
+  }
+]

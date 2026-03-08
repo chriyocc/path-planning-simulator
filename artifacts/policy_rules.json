@@ -1,0 +1,18 @@
+[
+  {
+    "guard": "remaining_time_s < 80 && inventory_count > 0",
+    "action": "Prioritize DROP_RESOURCE by highest sourceBranch points"
+  },
+  {
+    "guard": "holding_lock_for_branch != null",
+    "action": "Navigate to BLACK_ZONE and execute DROP_LOCK"
+  },
+  {
+    "guard": "all_resources_delivered && current_node != START",
+    "action": "RETURN_HOME"
+  },
+  {
+    "guard": "line_lost_s > 1.0",
+    "action": "Enter ERROR_RECOVERY spiral-reacquire profile"
+  }
+]
