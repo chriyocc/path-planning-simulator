@@ -6,12 +6,45 @@ import { GraphRouter } from "../src/router";
 import { randomizeRound } from "../src/randomization";
 import { simulateBatch } from "../src/batch";
 import { createDefaultSimulationConfig, simulateRound } from "../src/simulator";
-import type { StrategyPolicy } from "../src/types";
+import type { Observation, RoundState, StrategyPolicy } from "../src/types";
 
 const graph = createDefaultGraph();
 
 function config() {
   return createDefaultSimulationConfig(graph);
+}
+
+function stateAtRedZoneWithTwoRed(): RoundState {
+  return {
+    current_node: "ZONE_RED",
+    branch_to_resources: randomizeRound(1).branch_to_resources,
+    locks_cleared: { RED: true, YELLOW: false, BLUE: false, GREEN: false },
+    picked_slots: { R_RED_1: true, R_RED_2: true },
+    inventory: [
+      { color: "RED", sourceBranch: "RED" },
+      { color: "RED", sourceBranch: "RED" }
+    ],
+    holding_locks_for_branches: [],
+    holding_lock_for_branch: null,
+    placed_locks: [],
+    placed_resources: [],
+    score: 0,
+    time_elapsed_s: 0,
+    started_navigation: true,
+    reached_main_junction: true,
+    completed: false,
+    returned_to_start: false
+  };
+}
+
+function observationAtRedZone(cfg: ReturnType<typeof config>): Observation {
+  return {
+    remaining_time_s: cfg.timeout_s,
+    unlocked_branches: ["RED"],
+    locked_branches: ["YELLOW", "BLUE", "GREEN"],
+    inventory_count: 2,
+    all_resources_delivered: false
+  };
 }
 
 describe("routing", () => {
@@ -24,6 +57,13 @@ describe("routing", () => {
     expect(route.path).toContain("J_MID_LEFT");
     expect(route.path.at(-1)).toBe("BLACK_ZONE");
     expect(route.cost_s).toBeGreaterThan(0);
+  });
+
+  it("reaches the right black zone directly from the right loop", () => {
+    const cfg = config();
+    const router = new GraphRouter(cfg.map, cfg.robot);
+    const route = router.shortestPath("LOOP_TR", "BLACK_ZONE_RIGHT");
+    expect(route.path).toEqual(["LOOP_TR", "BLACK_ZONE_RIGHT"]);
   });
 });
 
@@ -110,6 +150,33 @@ describe("legality", () => {
     const result = simulateRound(config(), scriptedPolicy, 17);
     expect(result.legality_violations.some((v) => v.includes("slot order violated"))).toBe(true);
   });
+
+  it("bus route drops the second same-color resource immediately when already at the zone", () => {
+    const cfg = config();
+    const roundState = stateAtRedZoneWithTwoRed();
+    const observation = observationAtRedZone(cfg);
+
+    const action = BusRouteParametricPolicy.nextAction(roundState, observation, cfg);
+    expect(action).toEqual({ type: "DROP_RESOURCE", color: "RED" });
+  });
+
+  it("baseline single carry drops immediately when already at the matching zone", () => {
+    const cfg = config();
+    const action = BaselineSingleCarryPolicy.nextAction(stateAtRedZoneWithTwoRed(), observationAtRedZone(cfg), cfg);
+    expect(action).toEqual({ type: "DROP_RESOURCE", color: "RED" });
+  });
+
+  it("value aware deadline drops immediately when already at the matching zone", () => {
+    const cfg = config();
+    const action = ValueAwareDeadlinePolicy.nextAction(stateAtRedZoneWithTwoRed(), observationAtRedZone(cfg), cfg);
+    expect(action).toEqual({ type: "DROP_RESOURCE", color: "RED" });
+  });
+
+  it("optimal omniscient drops immediately when already at the matching zone", () => {
+    const cfg = config();
+    const action = OptimalOmniscientPolicy.nextAction(stateAtRedZoneWithTwoRed(), observationAtRedZone(cfg), cfg);
+    expect(action).toEqual({ type: "DROP_RESOURCE", color: "RED" });
+  });
 });
 
 describe("timing and scoring", () => {
@@ -192,5 +259,6 @@ describe("batch and exports", () => {
     expect(fw.fsm_states).toContain("ERROR_RECOVERY");
     expect(fw.route_table.length).toBeGreaterThan(0);
     expect(fw.policy_rules.length).toBeGreaterThan(0);
+    expect(fw.policy_rules.some((rule) => rule.action.includes("nearest BLACK_ZONE"))).toBe(true);
   });
 });

@@ -50,6 +50,17 @@ function heldLocks(state: RoundState): BranchId[] {
   return state.holding_lock_for_branch ? [state.holding_lock_for_branch] : [];
 }
 
+function dropColorAtCurrentZone(state: RoundState, config: SimulationConfig): Action | null {
+  for (const item of state.inventory) {
+    if (item.color === "BLACK") continue;
+    const color = item.color as Exclude<Action["color"], undefined>;
+    if (config.map.colorZoneNodeIds[color] === state.current_node) {
+      return { type: "DROP_RESOURCE", color };
+    }
+  }
+  return null;
+}
+
 function chooseNextLocked(
   state: RoundState,
   config: SimulationConfig,
@@ -150,13 +161,13 @@ function shouldChainSecondLockBeforeDrop(
   candidateBranch: BranchId
 ): boolean {
   const blackZones = config.map.blackZoneIds;
-  const blackZone = nearestBlackZone(router, state.current_node, blackZones);
-  const heldLockNode = config.map.branches[heldBranch].lock_node;
   const candidateLockNode = config.map.branches[candidateBranch].lock_node;
+  const dropNowZone = nearestBlackZone(router, state.current_node, blackZones);
+  const candidateDropZone = nearestBlackZone(router, candidateLockNode, blackZones);
 
-  const curToBlack = travelSeconds(router, state.current_node, blackZone);
-  const blackToCandidate = travelSeconds(router, blackZone, candidateLockNode);
-  const candidateToBlack = travelSeconds(router, candidateLockNode, blackZone);
+  const curToBlack = travelSeconds(router, state.current_node, dropNowZone);
+  const blackToCandidate = travelSeconds(router, dropNowZone, candidateLockNode);
+  const candidateToBlack = travelSeconds(router, candidateLockNode, candidateDropZone);
   const curToCandidate = travelSeconds(router, state.current_node, candidateLockNode);
 
   // Option A: drop held lock now, then later go pick+drop candidate lock.
@@ -215,6 +226,11 @@ export const BaselineSingleCarryPolicy: StrategyPolicy = {
       return { type: "DROP_LOCK", branchId: held[0] };
     }
 
+    const immediateDrop = dropColorAtCurrentZone(state, config);
+    if (immediateDrop) {
+      return immediateDrop;
+    }
+
     if (state.inventory.length > 0) {
       return chooseDropColor(state, config, router, "nearest");
     }
@@ -255,6 +271,11 @@ export const BusRouteParametricPolicy: StrategyPolicy = {
       return { type: "DROP_LOCK", branchId: held[0] };
     }
 
+    const immediateDrop = dropColorAtCurrentZone(state, config);
+    if (immediateDrop) {
+      return immediateDrop;
+    }
+
     const nextLocked = chooseNextLocked(state, config, router, "value");
     if (nextLocked) {
       return { type: "PICK_LOCK", branchId: nextLocked };
@@ -293,6 +314,11 @@ export const ValueAwareDeadlinePolicy: StrategyPolicy = {
 
     if (held.length > 0) {
       return { type: "DROP_LOCK", branchId: held[0] };
+    }
+
+    const immediateDrop = dropColorAtCurrentZone(state, config);
+    if (immediateDrop) {
+      return immediateDrop;
     }
 
     if (observation.remaining_time_s < 35) {

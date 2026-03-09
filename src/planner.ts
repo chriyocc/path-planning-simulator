@@ -6,6 +6,7 @@ const BRANCHES: BranchId[] = ["RED", "YELLOW", "BLUE", "GREEN"];
 const NODE_NAMES = [
   "START",
   "BLACK_ZONE",
+  "BLACK_ZONE_RIGHT",
   "ZONE_RED",
   "ZONE_YELLOW",
   "ZONE_BLUE",
@@ -26,6 +27,24 @@ const NODE_NAMES = [
 
 const NODE_TO_ID = Object.fromEntries(NODE_NAMES.map((name, i) => [name, i]));
 const ID_TO_NODE: Record<number, string> = Object.fromEntries(NODE_NAMES.map((name, i) => [i, name]));
+
+function nearestBlackZoneId(dist: number[][], fromNodeId: number, blackZoneIds: string[]): number {
+  const zoneNodeIds = blackZoneIds.map((zoneId) => NODE_TO_ID[zoneId]).filter((id) => id !== undefined);
+  if (zoneNodeIds.length === 0) {
+    throw new Error("No black zones configured for planner");
+  }
+  let bestNodeId = zoneNodeIds[0];
+  let bestCost = dist[fromNodeId][bestNodeId];
+  for (let i = 1; i < zoneNodeIds.length; i += 1) {
+    const candidateId = zoneNodeIds[i];
+    const candidateCost = dist[fromNodeId][candidateId];
+    if (candidateCost < bestCost) {
+      bestCost = candidateCost;
+      bestNodeId = candidateId;
+    }
+  }
+  return bestNodeId;
+}
 
 function packState(nodeId: number, locksHeldMask: number, locksCleared: number, resPicked: number, resDropped: number): number {
   return nodeId | (locksHeldMask << 5) | (locksCleared << 9) | (resPicked << 13) | (resDropped << 21);
@@ -119,9 +138,10 @@ export function computeOptimalPolicy(
     slotColors[b * 2 + 1] = colorId1;
   }
 
-  const dist: number[][] = Array(18).fill(0).map(() => Array(18).fill(0));
-  for (let i = 0; i < 18; i++) {
-    for (let j = 0; j < 18; j++) {
+  const nodeCount = NODE_NAMES.length;
+  const dist: number[][] = Array(nodeCount).fill(0).map(() => Array(nodeCount).fill(0));
+  for (let i = 0; i < nodeCount; i++) {
+    for (let j = 0; j < nodeCount; j++) {
       if (i === j) dist[i][j] = 0;
       else {
         dist[i][j] = router.shortestPath(ID_TO_NODE[i], ID_TO_NODE[j]).cost_s;
@@ -232,9 +252,9 @@ export function computeOptimalPolicy(
     const currentLoad = inventoryCount + heldCount;
 
     if (s.locksHeldMask > 0) {
-      const bZone = NODE_TO_ID["BLACK_ZONE"];
       for (let b = 0; b < 4; b++) {
         if ((s.locksHeldMask & (1 << b)) === 0) continue;
+        const bZone = nearestBlackZoneId(dist, s.nodeId, config.map.blackZoneIds);
         const newLocksHeldMask = s.locksHeldMask & ~(1 << b);
         const newLocksCleared = s.locksCleared | (1 << b);
         relax(

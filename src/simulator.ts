@@ -14,8 +14,11 @@ import { GraphRouter } from "./router";
 
 const BRANCHES: BranchId[] = ["RED", "YELLOW", "BLUE", "GREEN"];
 
-function nearestBlackZone(router: GraphRouter, fromNode: string): string {
-  const blackZones = ["BLACK_ZONE", "BLACK_ZONE_RIGHT"];
+function nearestBlackZone(router: GraphRouter, fromNode: string, blackZoneIds: string[]): string {
+  if (blackZoneIds.length === 0) {
+    throw new Error("No black zones configured");
+  }
+  const blackZones = blackZoneIds;
   let nearest = blackZones[0];
   let minTime = router.shortestPath(fromNode, nearest).cost_s;
   for (let i = 1; i < blackZones.length; i++) {
@@ -42,6 +45,7 @@ function createInitialState(config: SimulationConfig, seed: number): RoundState 
     inventory: [],
     holding_locks_for_branches: [],
     holding_lock_for_branch: null,
+    placed_locks: [],
     placed_resources: [],
     score: 0,
     time_elapsed_s: 0,
@@ -219,7 +223,7 @@ export function simulateRound(config: SimulationConfig, policy: StrategyPolicy, 
 
     if (action.type === "DROP_LOCK") {
       const branchId = action.branchId ?? state.holding_locks_for_branches[0];
-      const blackZone = nearestBlackZone(router, state.current_node);
+      const blackZone = nearestBlackZone(router, state.current_node, config.map.blackZoneIds);
       if (moveTo(state, blackZone, router, config, trace, action)) break;
       if (!branchId) {
         legality_violations.push("DROP_LOCK attempted without held lock");
@@ -233,6 +237,7 @@ export function simulateRound(config: SimulationConfig, policy: StrategyPolicy, 
       state.holding_locks_for_branches.splice(heldIdx, 1);
       syncLegacyHoldingLock(state);
       state.locks_cleared[branchId] = true;
+      state.placed_locks.push({ branchId, zoneId: blackZone });
       state.time_elapsed_s += config.robot.drop_s;
       state.score += config.lock_points.place;
       if (applyTimeout(state, config)) break;
@@ -348,7 +353,7 @@ export function createDefaultSimulationConfig(map: Graph): SimulationConfig {
         SOLID: 320,
         DASHED: 250,
         ZIGZAG: 220,
-        SINE: 300
+        SINE: 280
       },
       turn_penalty_s: {
         NONE: 0,

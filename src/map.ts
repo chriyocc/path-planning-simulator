@@ -41,11 +41,15 @@ export function createDefaultMapSpec(): MapSpec {
       { id: "LOOP_BL", kind: "JUNCTION", x_mm: 100, y_mm: 950 },
       { id: "LOOP_BR", kind: "JUNCTION", x_mm: 1400, y_mm: 950 },
       
-      { id: "LOOP_TL", kind: "JUNCTION", x_mm: 100, y_mm: 150 },
-      { id: "LOOP_TR", kind: "JUNCTION", x_mm: 1400, y_mm: 150 },
+      { id: "LOOP_TL", kind: "JUNCTION", x_mm: 100, y_mm: 100 },
+      { id: "LOOP_TR", kind: "JUNCTION", x_mm: 1400, y_mm: 100 },
       
-      { id: "BLACK_ZONE_RIGHT", kind: "BLACK_ZONE", x_mm: 1100, y_mm: 150 },
-      { id: "BLACK_ZONE", kind: "BLACK_ZONE", x_mm: 750, y_mm: 150 },
+      { id: "TOP_LEFT_CORNER", kind: "JUNCTION", x_mm: 550, y_mm: 0 },
+      { id: "BOTTOM_LEFT_CORNER", kind: "JUNCTION", x_mm: 550, y_mm: 200 },
+      { id: "TOP_RIGHT_CORNER", kind: "JUNCTION", x_mm: 900, y_mm: 0 },
+      { id: "BOTTOM_RIGHT_CORNER", kind: "JUNCTION", x_mm: 900, y_mm: 200 },
+      { id: "BLACK_ZONE_RIGHT", kind: "BLACK_ZONE", x_mm: 900, y_mm: 100 },
+      { id: "BLACK_ZONE", kind: "BLACK_ZONE", x_mm: 550, y_mm: 100 },
 
       { id: "LOOP_LEFT_Y", kind: "JUNCTION", x_mm: 100, y_mm: 400 },
       { id: "J_MID_LEFT", kind: "JUNCTION", x_mm: 550, y_mm: 950 },
@@ -105,6 +109,13 @@ export function createDefaultMapSpec(): MapSpec {
       
       { id: "E_LOOP_TL_BLACK", from: "LOOP_TL", to: "BLACK_ZONE", distance_mm: 650, line_type: "SOLID", bidirectional: true, turn_cost_class: "LIGHT" },
       { id: "E_LOOP_TR_BLACK_RIGHT", from: "LOOP_TR", to: "BLACK_ZONE_RIGHT", distance_mm: 300, line_type: "SOLID", bidirectional: true, turn_cost_class: "LIGHT" },
+
+      { id: "E_BLACK_TOP_LEFT", from: "BLACK_ZONE", to: "TOP_LEFT_CORNER", distance_mm: 100, line_type: "SOLID", bidirectional: true, turn_cost_class: "NONE" },
+      { id: "E_BLACK_BOTTOM_LEFT", from: "BLACK_ZONE", to: "BOTTOM_LEFT_CORNER", distance_mm: 100, line_type: "SOLID", bidirectional: true, turn_cost_class: "NONE" },
+      { id: "E_BLACK_RIGHT_TOP_RIGHT", from: "BLACK_ZONE_RIGHT", to: "TOP_RIGHT_CORNER", distance_mm: 100, line_type: "SOLID", bidirectional: true, turn_cost_class: "NONE" },
+      { id: "E_BLACK_RIGHT_BOTTOM_RIGHT", from: "BLACK_ZONE_RIGHT", to: "BOTTOM_RIGHT_CORNER", distance_mm: 100, line_type: "SOLID", bidirectional: true, turn_cost_class: "NONE" },
+      { id: "E_TOP_EDGE", from: "TOP_LEFT_CORNER", to: "TOP_RIGHT_CORNER", distance_mm: 350, line_type: "SOLID", bidirectional: true, turn_cost_class: "NONE" },
+      { id: "E_BOTTOM_EDGE", from: "BOTTOM_LEFT_CORNER", to: "BOTTOM_RIGHT_CORNER", distance_mm: 350, line_type: "SOLID", bidirectional: true, turn_cost_class: "NONE" },
 
       { id: "E_DELIVERY_RED", from: "J_MID_LEFT", to: "ZONE_RED", distance_mm: 250, line_type: "SOLID", bidirectional: true, turn_cost_class: "LIGHT" },
       { id: "E_DELIVERY_YELLOW", from: "LOOP_LEFT_Y", to: "ZONE_YELLOW", distance_mm: 440, line_type: "ZIGZAG", bidirectional: true, turn_cost_class: "LIGHT" },

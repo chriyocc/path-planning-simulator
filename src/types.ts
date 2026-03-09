@@ -103,6 +103,7 @@ export interface RoundState {
   inventory: InventoryItem[];
   holding_locks_for_branches: BranchId[];
   holding_lock_for_branch: BranchId | null;
+  placed_locks: Array<{ branchId: BranchId; zoneId: string }>;
   placed_resources: Array<{ color: Exclude<ResourceColor, "BLACK">; sourceBranch: BranchId }>;
   score: number;
   time_elapsed_s: number;

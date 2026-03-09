@@ -35,7 +35,7 @@ interface RobotPose extends Point {
 interface VisualState {
   inventory: ResourceColor[];
   holdingLockCount: number;
-  locksPlaced: BranchId[];
+  locksPlaced: Array<{ branchId: BranchId; zoneId: string }>;
   zonePlaced: Record<Exclude<ResourceColor, "BLACK">, number>;
   pickedSlots: Record<string, boolean>;
   elapsed_s: number;
@@ -334,9 +334,6 @@ function drawCircleMm(x_mm: number, y_mm: number, r_mm: number, color: string): 
 
 function drawMapTemplate(): void {
   drawRectMm(2, 2, 1496, 1996, "#202020", 2); // outer bounds
-  drawRectMm(100, 150, 1300, 800, "#202020", 4); // main central loop
-
-  drawRectMm(425, 0, 650, 150, "#000000", 3); // Black Zone (Top Center)
 
   drawRectMm(400, 250, 300, 300, "#d8bb23", 4); // YELLOW Top-Left
   drawRectMm(800, 250, 300, 300, "#2e67d3", 4); // BLUE Top-Right
@@ -468,23 +465,22 @@ function drawZoneCargoCounts(): void {
 }
 
 function drawBlackZoneLocks(): void {
-  const blackZonePt = nodePoint("BLACK_ZONE");
-  const branchOrder: BranchId[] = ["RED", "YELLOW", "BLUE", "GREEN"];
-  const locksCount = visualState.locksPlaced.length;
-  
-  for (let i = 0; i < locksCount; i += 1) {
-    const branchId = visualState.locksPlaced[i];
-    const xOffset = (i - (locksCount - 1) / 2) * 18;
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(blackZonePt.x + xOffset, blackZonePt.y, 6, 0, Math.PI * 2);
-    ctx.fillStyle = "#111111";
-    ctx.fill();
-    ctx.strokeStyle = "#444";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.restore();
-  }
+  graph.blackZoneIds.forEach((zoneId) => {
+    const blackZonePt = nodePoint(zoneId);
+    const zoneLocks = visualState.locksPlaced.filter((lock) => lock.zoneId === zoneId);
+    for (let i = 0; i < zoneLocks.length; i += 1) {
+      const xOffset = (i - (zoneLocks.length - 1) / 2) * 18;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(blackZonePt.x + xOffset, blackZonePt.y, 6, 0, Math.PI * 2);
+      ctx.fillStyle = "#111111";
+      ctx.fill();
+      ctx.strokeStyle = "#444";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+    }
+  });
 }
 
 function drawRobot(pose: RobotPose): void {
@@ -608,7 +604,7 @@ function deriveVisualState(result: SimulationResult, stepIdx: number, progressIn
   const v = emptyVisualState();
   let elapsed = 0;
   const heldLockBranches: BranchId[] = [];
-  const locksPlaced: BranchId[] = [];
+  const locksPlaced: Array<{ branchId: BranchId; zoneId: string }> = [];
   const placedCounts: Record<string, number> = { RED: 0, YELLOW: 0, BLUE: 0, GREEN: 0 };
 
   function applyCompletedStep(step: TraceStep): void {
@@ -620,7 +616,10 @@ function deriveVisualState(result: SimulationResult, stepIdx: number, progressIn
 
     if (step.note === "lock_deposited") {
       const branchId = step.action.branchId ?? heldLockBranches[0];
-      if (branchId && !locksPlaced.includes(branchId)) locksPlaced.push(branchId);
+      const zoneId = step.toNode;
+      if (branchId && !locksPlaced.some((lock) => lock.branchId === branchId)) {
+        locksPlaced.push({ branchId, zoneId });
+      }
       if (branchId) {
         const idx = heldLockBranches.indexOf(branchId);
         if (idx >= 0) heldLockBranches.splice(idx, 1);
@@ -680,7 +679,7 @@ function runRound(): void {
   visualState = {
     inventory: result.state.inventory.map(i => i.color),
     holdingLockCount: result.state.holding_locks_for_branches?.length ?? (result.state.holding_lock_for_branch ? 1 : 0),
-    locksPlaced: (Object.keys(result.state.locks_cleared) as BranchId[]).filter(b => result.state.locks_cleared[b]),
+    locksPlaced: result.state.placed_locks.map((lock) => ({ ...lock })),
     zonePlaced: { RED: 0, YELLOW: 0, BLUE: 0, GREEN: 0 },
     pickedSlots: { ...result.state.picked_slots },
     elapsed_s: result.state.time_elapsed_s
