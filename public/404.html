@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Redirecting...</title>
+    <script>
+      (function () {
+        var path = window.location.pathname + window.location.search + window.location.hash;
+        var repoBase = "/path-planning-simulator/";
+        var redirectBase = window.location.pathname.indexOf(repoBase) === 0 ? repoBase : "/";
+        window.location.replace(redirectBase + "?p=" + encodeURIComponent(path));
+      })();
+    </script>
+  </head>
+  <body></body>
+</html>

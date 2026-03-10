@@ -13,14 +13,16 @@ import {
 
 describe("translator helpers", () => {
   it("resolves the translator path separately from the simulator", () => {
-    expect(resolveAppPage("/")).toBe("simulator");
-    expect(resolveAppPage("/translator")).toBe("translator");
-    expect(resolveAppPage("/anything-else")).toBe("simulator");
+    expect(resolveAppPage("/", "")).toBe("simulator");
+    expect(resolveAppPage("/translator", "")).toBe("translator");
+    expect(resolveAppPage("/path-planning-simulator/translator", "")).toBe("translator");
+    expect(resolveAppPage("/anything-else", "")).toBe("simulator");
   });
 
-  it("uses absolute in-app hrefs so direct /translator loads do not request nested assets", () => {
+  it("uses clean path-based hrefs while preserving the github pages repo base", () => {
     expect(appPageHref("simulator")).toBe("/");
     expect(appPageHref("translator")).toBe("/translator");
+    expect(appPageHref("translator", "/path-planning-simulator/")).toBe("/path-planning-simulator/translator");
   });
 
   it("finds the expected layout id for the default tutorial placement", () => {

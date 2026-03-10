@@ -54,6 +54,7 @@ function planToCompactText(actionCount: number, steps: ReturnType<typeof buildTu
 }
 
 export function renderTranslatorPage(app: HTMLDivElement): void {
+  const appBaseHref = import.meta.env.BASE_URL;
   app.innerHTML = `
     <main class="translator-page">
       <header class="translator-hero">
@@ -61,8 +62,8 @@ export function renderTranslatorPage(app: HTMLDivElement): void {
         <h1>Plan Translator</h1>
         <p class="hero-copy">Teach teammates how <code>g_layouts</code>, <code>g_plan_table</code>, and <code>g_route_table</code> connect. Start with a color placement, see the matching layout ID, decode each action, then see which target node firmware uses for the route lookup.</p>
         <nav class="page-nav">
-          <a class="page-link-button" href="${appPageHref("simulator")}">Open Simulator</a>
-          <a href="${appPageHref("translator")}">Refresh Translator</a>
+          <a class="page-link-button" href="${appPageHref("simulator", appBaseHref)}">Open Simulator</a>
+          <a href="${appPageHref("translator", appBaseHref)}">Refresh Translator</a>
         </nav>
       </header>
 

@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RoboSurvivor 2026 Strategy Simulator</title>
+    <script>
+      (function () {
+        var redirect = window.location.search.match(/[?&]p=([^&]+)/);
+        if (!redirect) return;
+        var nextPath = decodeURIComponent(redirect[1]).replace(/^\/+/, "/");
+        var cleanSearch = window.location.search
+          .replace(/[?&]p=[^&]*/, "")
+          .replace(/^&/, "?")
+          .replace(/\?$/, "");
+        var nextUrl = nextPath + cleanSearch + window.location.hash;
+        window.history.replaceState(null, "", nextUrl);
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

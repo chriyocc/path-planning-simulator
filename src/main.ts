@@ -350,7 +350,9 @@ const baseConfig = createDefaultSimulationConfig(graph);
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("#app not found");
 
-if (resolveAppPage(window.location.pathname) === "translator") {
+const appBaseHref = import.meta.env.BASE_URL;
+
+if (resolveAppPage(window.location.pathname, window.location.hash) === "translator") {
   renderTranslatorPage(app);
 } else {
 app.innerHTML = `
@@ -364,7 +366,7 @@ app.innerHTML = `
       <h1>RoboSurvivor 2026</h1>
       <p class="hero-copy">Compare policies, inspect the robot trace, and export the firmware-facing tables that are actually useful downstream.</p>
       <nav class="page-nav">
-        <a class="page-link-button" href="${appPageHref("translator")}">Open Translator Tutorial</a>
+        <a class="page-link-button" href="${appPageHref("translator", appBaseHref)}">Open Translator Tutorial</a>
       </nav>
     </header>
 
