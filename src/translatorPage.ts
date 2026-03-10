@@ -1,3 +1,4 @@
+import { appPageHref } from "./appRoutes";
 import {
   BRANCH_ID_LABELS,
   COLOR_ID_LABELS,
@@ -60,8 +61,8 @@ export function renderTranslatorPage(app: HTMLDivElement): void {
         <h1>Plan Translator</h1>
         <p class="hero-copy">Teach teammates how <code>g_layouts</code>, <code>g_plan_table</code>, and <code>g_route_table</code> connect. Start with a color placement, see the matching layout ID, decode each action, then see which target node firmware uses for the route lookup.</p>
         <nav class="page-nav">
-          <a class="page-link-button" href="./">Open Simulator</a>
-          <a href="./translator">Refresh Translator</a>
+          <a class="page-link-button" href="${appPageHref("simulator")}">Open Simulator</a>
+          <a href="${appPageHref("translator")}">Refresh Translator</a>
         </nav>
       </header>
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveAppPage } from "../src/appRoutes";
+import { appPageHref, resolveAppPage } from "../src/appRoutes";
 import {
   buildTutorialExecution,
   buildPlanForPlacement,
@@ -16,6 +16,11 @@ describe("translator helpers", () => {
     expect(resolveAppPage("/")).toBe("simulator");
     expect(resolveAppPage("/translator")).toBe("translator");
     expect(resolveAppPage("/anything-else")).toBe("simulator");
+  });
+
+  it("uses absolute in-app hrefs so direct /translator loads do not request nested assets", () => {
+    expect(appPageHref("simulator")).toBe("/");
+    expect(appPageHref("translator")).toBe("/translator");
   });
 
   it("finds the expected layout id for the default tutorial placement", () => {

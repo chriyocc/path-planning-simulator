@@ -1,5 +1,5 @@
 import "./styles.css";
-import { resolveAppPage } from "./appRoutes";
+import { appPageHref, resolveAppPage } from "./appRoutes";
 import {
   ALL_POLICIES,
   AdaptiveSafePolicy,
@@ -364,7 +364,7 @@ app.innerHTML = `
       <h1>RoboSurvivor 2026</h1>
       <p class="hero-copy">Compare policies, inspect the robot trace, and export the firmware-facing tables that are actually useful downstream.</p>
       <nav class="page-nav">
-        <a class="page-link-button" href="./translator">Open Translator Tutorial</a>
+        <a class="page-link-button" href="${appPageHref("translator")}">Open Translator Tutorial</a>
       </nav>
     </header>
 
