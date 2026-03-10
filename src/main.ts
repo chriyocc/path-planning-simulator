@@ -1,4 +1,5 @@
 import "./styles.css";
+import { resolveAppPage } from "./appRoutes";
 import {
   ALL_POLICIES,
   AdaptiveSafePolicy,
@@ -24,12 +25,14 @@ import type {
   LineType,
   LockClearStrategyMode,
   PolicyOverrides,
+  ResourceDropOrderMode,
   ResourceColor,
   SimulationConfig,
   SimulationResult,
   StrategyPolicy,
   TraceStep
 } from "./types";
+import { renderTranslatorPage } from "./translatorPage";
 
 interface Point {
   x: number;
@@ -41,7 +44,7 @@ interface RobotPose extends Point {
 }
 
 interface VisualState {
-  inventory: ResourceColor[];
+  inventory: Array<{ color: ResourceColor; sourceBranch?: BranchId }>;
   holdingLockCount: number;
   locksPlaced: Array<{ branchId: BranchId; zoneId: string }>;
   zonePlaced: Record<Exclude<ResourceColor, "BLACK">, number>;
@@ -87,8 +90,8 @@ const SECTION_INFO: Record<string, SectionInfo> = {
     title: "Strategy Knobs",
     body: [
       "This section lets you override specific policy decisions without replacing the whole policy.",
-      "You can control how supported policies carry black locks, and the fixed-route policy also exposes branch order, colored-resource drop timing, and whether to clear all locks before collecting resources.",
-      "Only policies that explicitly support overrides will use these settings. Unsupported policies keep their built-in behavior."
+      "Resource Drop Order is the universal knob. When set to LiFo, the simulator removes the most recently picked matching colored resource first whenever a DROP_RESOURCE action is executed.",
+      "Some policies also expose extra strategy knobs for black-lock carrying and fixed-route experiments. Those policy-specific controls only appear where they are supported."
     ]
   },
   "round-actions": {
@@ -347,6 +350,9 @@ const baseConfig = createDefaultSimulationConfig(graph);
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("#app not found");
 
+if (resolveAppPage(window.location.pathname) === "translator") {
+  renderTranslatorPage(app);
+} else {
 app.innerHTML = `
 <div class="layout">
   <section class="board">
@@ -357,6 +363,9 @@ app.innerHTML = `
       <p class="eyebrow">Path Planning Simulator</p>
       <h1>RoboSurvivor 2026</h1>
       <p class="hero-copy">Compare policies, inspect the robot trace, and export the firmware-facing tables that are actually useful downstream.</p>
+      <nav class="page-nav">
+        <a class="page-link-button" href="./translator">Open Translator Tutorial</a>
+      </nav>
     </header>
 
     <section class="section-card" data-section="simulation-controls">
@@ -400,6 +409,12 @@ app.innerHTML = `
       </div>
       <div class="info-panel hidden" id="info-strategy-knobs"></div>
       <div class="controls">
+        <label id="resourceDropOrderControl">Resource Drop Order
+          <select id="resourceDropOrder">
+            <option value="auto">Policy default / Auto</option>
+            <option value="lifo">LiFo</option>
+          </select>
+        </label>
         <label id="blackLockCarryControl">Black Lock Carry
           <select id="blackLockCarry">
             <option value="auto">Policy default / Auto</option>
@@ -604,6 +619,8 @@ if (!context) throw new Error("Canvas context unavailable");
 const ctx: CanvasRenderingContext2D = context;
 
 const policySelect = document.getElementById("policy") as HTMLSelectElement;
+const resourceDropOrderControl = document.getElementById("resourceDropOrderControl") as HTMLLabelElement;
+const resourceDropOrderSelect = document.getElementById("resourceDropOrder") as HTMLSelectElement;
 const blackLockCarryControl = document.getElementById("blackLockCarryControl") as HTMLLabelElement;
 const blackLockCarrySelect = document.getElementById("blackLockCarry") as HTMLSelectElement;
 const branchOrderControl = document.getElementById("branchOrderControl") as HTMLLabelElement;
@@ -649,6 +666,7 @@ policySelect.value = AdaptiveSafePolicy.name;
 let latestResult: SimulationResult | null = null;
 let latestBatch: BatchResult[] = [];
 let currentOverrides: PolicyOverrides = createDefaultPolicyOverrides();
+resourceDropOrderSelect.value = currentOverrides.resource_drop_order;
 blackLockCarrySelect.value = currentOverrides.black_lock_carry_mode;
 branchOrderSelect.value = currentOverrides.branch_order;
 colorDropTimingSelect.value = currentOverrides.color_drop_timing;
@@ -711,6 +729,7 @@ function renderPolicyDetails(name: string): void {
   const supportsOverrides = policySupportsOverrides(name);
   const fixedRouteExperiment = policySupportsFixedRouteExperiment(name);
   const overrideLines: string[] = [];
+  overrideLines.push(`resource drop order = ${currentOverrides.resource_drop_order}`);
   if (supportsOverrides) {
     overrideLines.push(`black lock carry = ${currentOverrides.black_lock_carry_mode}`);
   }
@@ -757,7 +776,9 @@ function syncStrategyKnobs(): void {
   const policyName = policySelect.value;
   const supportsOverrides = policySupportsOverrides(policyName);
   const supportsFixedRouteExperiment = policySupportsFixedRouteExperiment(policyName);
-  strategyKnobsCard.classList.toggle("knobs-disabled", !supportsOverrides);
+  strategyKnobsCard.classList.remove("knobs-disabled");
+  resourceDropOrderControl.classList.remove("hidden");
+  resourceDropOrderSelect.disabled = false;
   blackLockCarryControl.classList.toggle("hidden", !supportsOverrides);
   blackLockCarrySelect.disabled = !supportsOverrides;
   branchOrderControl.classList.toggle("hidden", !supportsFixedRouteExperiment);
@@ -769,17 +790,18 @@ function syncStrategyKnobs(): void {
 
   if (supportsFixedRouteExperiment) {
     strategyKnobsMessage.textContent =
-      "This fixed-route policy supports black-lock carry, branch order, color drop timing, and lock-clear sequencing overrides.";
+      "LiFo is active for every policy. This fixed-route policy also supports black-lock carry, branch order, color drop timing, and lock-clear sequencing overrides.";
   } else if (supportsOverrides) {
-    strategyKnobsMessage.textContent = "This policy supports black-lock carry overrides for testing.";
+    strategyKnobsMessage.textContent = "LiFo is active for every policy. This policy also supports black-lock carry overrides for testing.";
   } else {
-    strategyKnobsMessage.textContent = "This policy uses its built-in behavior. Strategy knobs are not applied.";
+    strategyKnobsMessage.textContent = "This policy uses its built-in branch and lock behavior, but the LiFo resource-drop override still applies.";
   }
 }
 
 function currentPolicyOverrides(): PolicyOverrides {
   return {
     ...currentOverrides,
+    resource_drop_order: resourceDropOrderSelect.value as ResourceDropOrderMode,
     black_lock_carry_mode: blackLockCarrySelect.value as BlackLockCarryMode,
     branch_order: branchOrderSelect.value as BranchOrderMode,
     color_drop_timing: colorDropTimingSelect.value as ColorDropTimingMode,
@@ -1149,13 +1171,13 @@ function drawRobot(pose: RobotPose): void {
     ctx.stroke();
   }
   // Draw colored resources
-  visualState.inventory.forEach((color, idx) => {
+  visualState.inventory.forEach((item, idx) => {
     const slotIndex = idx + visualState.holdingLockCount;
     const px = slotX[slotIndex] ?? 0;
     const py = 0 + Math.floor(slotIndex / 3) * 6;
     ctx.beginPath();
     ctx.arc(px, py, 2.7, 0, Math.PI * 2);
-    ctx.fillStyle = resourceColorHex(color as Exclude<ResourceColor, "BLACK">);
+    ctx.fillStyle = resourceColorHex(item.color as Exclude<ResourceColor, "BLACK">);
     ctx.fill();
     ctx.strokeStyle = "#111";
     ctx.lineWidth = 0.8;
@@ -1180,6 +1202,7 @@ function summarizeResult(result: SimulationResult): void {
   const lines = [
     `policy=${result.policy_name}`,
     `seed=${result.seed}`,
+    `resource_drop_order=${currentPolicyOverrides().resource_drop_order}`,
     `score=${s.score}`,
     `time=${s.time_elapsed_s.toFixed(2)}s`,
     `placed=${s.placed_resources.length}/8`,
@@ -1189,14 +1212,20 @@ function summarizeResult(result: SimulationResult): void {
   ];
 
   if (policySupportsOverrides(policySelect.value)) {
-    lines.splice(2, 0, `black_lock_carry=${currentPolicyOverrides().black_lock_carry_mode}`);
+    lines.splice(3, 0, `black_lock_carry=${currentPolicyOverrides().black_lock_carry_mode}`);
   } else {
-    lines.splice(2, 0, "black_lock_carry=unsupported(policy default)");
+    lines.splice(3, 0, "black_lock_carry=unsupported(policy default)");
   }
   if (policySupportsFixedRouteExperiment(policySelect.value)) {
-    lines.splice(3, 0, `branch_order=${currentPolicyOverrides().branch_order}`);
-    lines.splice(4, 0, `color_drop_timing=${currentPolicyOverrides().color_drop_timing}`);
-    lines.splice(5, 0, `lock_clear_strategy=${currentPolicyOverrides().lock_clear_strategy}`);
+    lines.splice(4, 0, `branch_order=${currentPolicyOverrides().branch_order}`);
+    lines.splice(5, 0, `color_drop_timing=${currentPolicyOverrides().color_drop_timing}`);
+    lines.splice(6, 0, `lock_clear_strategy=${currentPolicyOverrides().lock_clear_strategy}`);
+  }
+
+  if (s.placed_resources.length > 0) {
+    lines.push("");
+    lines.push("placed_order=");
+    lines.push(...s.placed_resources.map((item, index) => `  ${index + 1}. ${item.color} from ${item.sourceBranch}`));
   }
 
   summaryEl.textContent = lines.join("\n");
@@ -1212,7 +1241,7 @@ function updateLivePanel(timeoutS: number): void {
   liveEl.textContent = [
     `elapsed=${visualState.elapsed_s.toFixed(1)}s`,
     `remaining=${remaining.toFixed(1)}s`,
-    `carrying=[locks=${visualState.holdingLockCount}, resources=${visualState.inventory.join(", ") || "empty"}]`,
+    `carrying=[locks=${visualState.holdingLockCount}, resources=${visualState.inventory.map((item) => `${item.color}${item.sourceBranch ? `:${item.sourceBranch}` : ""}`).join(", ") || "empty"}]`,
     `zone_fill: R=${visualState.zonePlaced.RED} Y=${visualState.zonePlaced.YELLOW} B=${visualState.zonePlaced.BLUE} G=${visualState.zonePlaced.GREEN}`
   ].join("\n");
 }
@@ -1250,6 +1279,7 @@ function deriveVisualState(result: SimulationResult, stepIdx: number, progressIn
   const heldLockBranches: BranchId[] = [];
   const locksPlaced: Array<{ branchId: BranchId; zoneId: string }> = [];
   const placedCounts: Record<string, number> = { RED: 0, YELLOW: 0, BLUE: 0, GREEN: 0 };
+  let placedResourceIndex = 0;
 
   function applyCompletedStep(step: TraceStep): void {
     if (step.note === "lock_gripped") {
@@ -1273,14 +1303,29 @@ function deriveVisualState(result: SimulationResult, stepIdx: number, progressIn
 
     if (step.note?.startsWith("picked_")) {
       const c = parsePickedColor(step, result.state.branch_to_resources);
-      if (c) v.inventory.push(c);
+      if (c) {
+        v.inventory.push({
+          color: c,
+          sourceBranch: step.action.branchId
+        });
+      }
       if (step.action.slotNodeId) v.pickedSlots[step.action.slotNodeId] = true;
       return;
     }
 
     if (step.note?.startsWith("dropped_")) {
-      const color = (step.action.color ?? (step.note?.replace("dropped_", "").toUpperCase() as ResourceColor)) as Exclude<ResourceColor, "BLACK">;
-      const idx = v.inventory.indexOf(color);
+      const placedItem = result.state.placed_resources[placedResourceIndex];
+      placedResourceIndex += 1;
+      const color = (
+        placedItem?.color ??
+        step.action.color ??
+        (step.note?.replace("dropped_", "").toUpperCase() as ResourceColor)
+      ) as Exclude<ResourceColor, "BLACK">;
+      const idx = placedItem
+        ? v.inventory.findIndex((inventoryItem) =>
+            inventoryItem.color === placedItem.color && inventoryItem.sourceBranch === placedItem.sourceBranch
+          )
+        : v.inventory.findIndex((inventoryItem) => inventoryItem.color === color);
       if (idx >= 0) v.inventory.splice(idx, 1);
       placedCounts[color] = (placedCounts[color] || 0) + 1;
     }
@@ -1311,8 +1356,9 @@ function runRound(): void {
   stopTracePlayback(true);
   const config = configFromInputs();
   const policy = selectedExecutionPolicy();
+  const overrides = currentPolicyOverrides();
   const seed = Math.max(1, Number(seedInput.value) || 1);
-  const result = simulateRound(config, policy, seed);
+  const result = simulateRound(config, policy, seed, overrides);
   latestResult = result;
   const finalPt = mmToCanvas(
     result.state.current_node ? config.map.nodes[result.state.current_node].x_mm : graph.nodes[graph.startNodeId].x_mm,
@@ -1321,7 +1367,7 @@ function runRound(): void {
   robotPose = { ...finalPt, heading: robotPose.heading };
   // Use final state directly from simulation result
   visualState = {
-    inventory: result.state.inventory.map(i => i.color),
+    inventory: result.state.inventory.map((item) => ({ color: item.color, sourceBranch: item.sourceBranch })),
     holdingLockCount: result.state.holding_locks_for_branches?.length ?? (result.state.holding_lock_for_branch ? 1 : 0),
     locksPlaced: result.state.placed_locks.map((lock) => ({ ...lock })),
     zonePlaced: { RED: 0, YELLOW: 0, BLUE: 0, GREEN: 0 },
@@ -1467,7 +1513,8 @@ async function runBatch(): Promise<void> {
   const config = configFromInputs();
   const runs = Math.max(10, Number(runsInput.value) || 100);
   try {
-    latestBatch = ALL_POLICIES.map((p) => simulateBatch(config, withPolicyOverrides(p, currentPolicyOverrides()), runs));
+    const overrides = currentPolicyOverrides();
+    latestBatch = ALL_POLICIES.map((p) => simulateBatch(config, withPolicyOverrides(p, overrides), runs, overrides));
     summarizeBatch(latestBatch);
   } finally {
     showBatchToast(false);
@@ -1555,6 +1602,11 @@ speedInput.oninput = () => {
 
 policySelect.onchange = () => {
   syncStrategyKnobs();
+  renderPolicyDetails(policySelect.value);
+};
+
+resourceDropOrderSelect.onchange = () => {
+  currentOverrides = currentPolicyOverrides();
   renderPolicyDetails(policySelect.value);
 };
 
@@ -1689,3 +1741,4 @@ summarizeBatch([]);
 updateLivePanel(baseConfig.timeout_s);
 summaryEl.textContent = "Run a round to see the latest score, legality, and trace depth.";
 randomizationEl.textContent = "Run a round to reveal the seeded branch layout used by the simulator.";
+}

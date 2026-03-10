@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "generate:artifacts": "tsx src/generateArtifacts.ts"
+    "generate:artifacts": "tsx src/generateArtifacts.ts",
+    "generate:stm32": "tsx src/generateStm32Tables.ts"
   },
   "devDependencies": {
     "@types/node": "^25.3.1",

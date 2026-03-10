@@ -197,12 +197,14 @@ export type BranchOrderMode =
   | "green_blue_yellow_red";
 export type ColorDropTimingMode = "auto" | "immediate" | "when_full";
 export type LockClearStrategyMode = "auto" | "clear_all_first";
+export type ResourceDropOrderMode = "auto" | "lifo";
 
 export interface PolicyOverrides {
   black_lock_carry_mode: BlackLockCarryMode;
   branch_order: BranchOrderMode;
   color_drop_timing: ColorDropTimingMode;
   lock_clear_strategy: LockClearStrategyMode;
+  resource_drop_order: ResourceDropOrderMode;
 }
 
 export interface RouteRow {

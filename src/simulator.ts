@@ -3,6 +3,7 @@ import type {
   BranchId,
   Graph,
   Observation,
+  PolicyOverrides,
   RoundState,
   SimulationConfig,
   SimulationResult,
@@ -149,11 +150,31 @@ function checkFullCompletion(state: RoundState, config: SimulationConfig): void 
   }
 }
 
-export function simulateRound(config: SimulationConfig, policy: StrategyPolicy, seed: number): SimulationResult {
+function inventoryDropIndex(
+  state: RoundState,
+  color: Exclude<Action["color"], undefined>,
+  dropOrder: PolicyOverrides["resource_drop_order"]
+): number {
+  if (dropOrder === "lifo") {
+    for (let i = state.inventory.length - 1; i >= 0; i -= 1) {
+      if (state.inventory[i].color === color) return i;
+    }
+    return -1;
+  }
+  return state.inventory.findIndex((item) => item.color === color);
+}
+
+export function simulateRound(
+  config: SimulationConfig,
+  policy: StrategyPolicy,
+  seed: number,
+  overrides?: Partial<PolicyOverrides>
+): SimulationResult {
   const state = createInitialState(config, seed);
   const router = new GraphRouter(config.map, config.robot);
   const trace: TraceStep[] = [];
   const legality_violations: string[] = [];
+  const resourceDropOrder = overrides?.resource_drop_order ?? "auto";
 
   const maxSteps = 500;
   for (let steps = 0; steps < maxSteps && !state.completed; steps += 1) {
@@ -310,7 +331,7 @@ export function simulateRound(config: SimulationConfig, policy: StrategyPolicy, 
       }
       const zone = config.map.colorZoneNodeIds[color];
       if (moveTo(state, zone, router, config, trace, action)) break;
-      const idx = state.inventory.findIndex((item) => item.color === color);
+      const idx = inventoryDropIndex(state, color, resourceDropOrder);
       if (idx < 0) {
         legality_violations.push(`DROP_RESOURCE color not in inventory ${color}`);
         continue;

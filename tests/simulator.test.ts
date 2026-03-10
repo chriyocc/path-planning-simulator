@@ -54,6 +54,14 @@ function observationAtRedZone(cfg: ReturnType<typeof config>): Observation {
   };
 }
 
+function scriptedPolicy(actions: readonly ReturnType<StrategyPolicy["nextAction"]>[], name = "Scripted"): StrategyPolicy {
+  let idx = 0;
+  return {
+    name,
+    nextAction: () => actions[idx++] ?? { type: "END_ROUND" }
+  };
+}
+
 describe("routing", () => {
   it("finds shortest path between start and black zone through junctions", () => {
     const cfg = config();
@@ -183,6 +191,68 @@ describe("legality", () => {
     const cfg = config();
     const action = OptimalOmniscientPolicy.nextAction(stateAtRedZoneWithTwoRed(), observationAtRedZone(cfg), cfg);
     expect(action).toEqual({ type: "DROP_RESOURCE", color: "RED" });
+  });
+
+  it("LiFo means the most recently picked resource is dropped next, even if it changes the color choice", () => {
+    const cfg = config();
+    cfg.robot.carry_capacity = 2;
+    const roundState: RoundState = {
+      current_node: "J_MAIN",
+      branch_to_resources: randomizeRound(1).branch_to_resources,
+      locks_cleared: { RED: true, YELLOW: false, BLUE: false, GREEN: false },
+      picked_slots: { R_RED_1: true, R_RED_2: true },
+      inventory: [
+        { color: "RED", sourceBranch: "RED" },
+        { color: "GREEN", sourceBranch: "RED" }
+      ],
+      holding_locks_for_branches: [],
+      holding_lock_for_branch: null,
+      placed_locks: [],
+      placed_resources: [],
+      score: 0,
+      time_elapsed_s: 0,
+      started_navigation: true,
+      reached_main_junction: true,
+      completed: false,
+      returned_to_start: false
+    };
+    const observation: Observation = {
+      remaining_time_s: cfg.timeout_s,
+      unlocked_branches: ["RED"],
+      locked_branches: ["YELLOW", "BLUE", "GREEN"],
+      inventory_count: 2,
+      all_resources_delivered: false
+    };
+
+    const wrapped = withPolicyOverrides(OptimalOmniscientPolicy, { resource_drop_order: "lifo" });
+    expect(wrapped.nextAction(roundState, observation, cfg)).toEqual({ type: "DROP_RESOURCE", color: "GREEN" });
+  });
+
+  it("drop resource uses FIFO matching removal in auto mode and LiFo removal when enabled", () => {
+    const cfg = config();
+    cfg.robot.carry_capacity = 3;
+    const actions = [
+      { type: "PICK_LOCK", branchId: "GREEN" },
+      { type: "DROP_LOCK", branchId: "GREEN" },
+      { type: "PICK_RESOURCE", slotNodeId: "R_GREEN_1", branchId: "GREEN" },
+      { type: "PICK_RESOURCE", slotNodeId: "R_GREEN_2", branchId: "GREEN" },
+      { type: "PICK_LOCK", branchId: "RED" },
+      { type: "DROP_LOCK", branchId: "RED" },
+      { type: "PICK_RESOURCE", slotNodeId: "R_RED_1", branchId: "RED" },
+      { type: "DROP_RESOURCE", color: "RED" },
+      { type: "END_ROUND" }
+    ] as const;
+
+    const autoResult = simulateRound(cfg, scriptedPolicy(actions, "DropAuto"), 1);
+    const lifoResult = simulateRound(
+      cfg,
+      scriptedPolicy(actions, "DropLiFo"),
+      1,
+      { resource_drop_order: "lifo" }
+    );
+
+    expect(autoResult.state.placed_resources[0]).toEqual({ color: "RED", sourceBranch: "GREEN" });
+    expect(lifoResult.state.placed_resources[0]).toEqual({ color: "RED", sourceBranch: "RED" });
   });
 });
 
@@ -394,15 +464,12 @@ describe("policy comparisons", () => {
     ).toEqual(["YELLOW", "BLUE", "GREEN", "RED"]);
   });
 
-  it("unsupported policies ignore overrides and keep their original name", () => {
+  it("every policy can be wrapped and LiFo suffix is preserved in the effective name", () => {
     const wrapped = withPolicyOverrides(BaselineSingleCarryPolicy, {
-      black_lock_carry_mode: "fill_capacity",
-      branch_order: "green_blue_yellow_red",
-      color_drop_timing: "immediate",
-      lock_clear_strategy: "clear_all_first"
+      resource_drop_order: "lifo"
     });
-    expect(wrapped).toBe(BaselineSingleCarryPolicy);
-    expect(wrapped.name).toBe(BaselineSingleCarryPolicy.name);
+    expect(wrapped).not.toBe(BaselineSingleCarryPolicy);
+    expect(wrapped.name).toContain("cargo:lifo");
   });
 
   it("bus route ignores fixed-route-only knobs and still obeys black-lock carry override", () => {
@@ -437,10 +504,18 @@ describe("policy comparisons", () => {
       black_lock_carry_mode: "single",
       branch_order: "green_blue_yellow_red",
       color_drop_timing: "immediate",
-      lock_clear_strategy: "clear_all_first"
+      lock_clear_strategy: "clear_all_first",
+      resource_drop_order: "lifo"
     }).nextAction({ ...state }, observation, cfg);
 
     expect(action).toEqual({ type: "DROP_LOCK", branchId: "YELLOW" });
+  });
+
+  it("LiFo wrappers are applied across baseline, bus, fixed-route, and optimal policies", () => {
+    expect(withPolicyOverrides(BaselineSingleCarryPolicy, { resource_drop_order: "lifo" }).name).toContain("cargo:lifo");
+    expect(withPolicyOverrides(BusRouteParametricPolicy, { resource_drop_order: "lifo" }).name).toContain("cargo:lifo");
+    expect(withPolicyOverrides(FixedRouteCapacity2Policy, { resource_drop_order: "lifo" }).name).toContain("cargo:lifo");
+    expect(withPolicyOverrides(OptimalOmniscientPolicy, { resource_drop_order: "lifo" }).name).toContain("cargo:lifo");
   });
 
   it("higher carry capacity should not increase mean time for bus policy", { timeout: 15000 }, () => {

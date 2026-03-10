@@ -1,4 +1,4 @@
-import type { BatchResult, SimulationConfig, StrategyPolicy } from "./types";
+import type { BatchResult, PolicyOverrides, SimulationConfig, StrategyPolicy } from "./types";
 import { simulateRound } from "./simulator";
 
 function percentile(sorted: number[], p: number): number {
@@ -7,10 +7,15 @@ function percentile(sorted: number[], p: number): number {
   return sorted[idx];
 }
 
-export function simulateBatch(config: SimulationConfig, policy: StrategyPolicy, runs: number): BatchResult {
+export function simulateBatch(
+  config: SimulationConfig,
+  policy: StrategyPolicy,
+  runs: number,
+  overrides?: Partial<PolicyOverrides>
+): BatchResult {
   const results = [];
   for (let i = 1; i <= runs; i += 1) {
-    results.push(simulateRound(config, policy, i));
+    results.push(simulateRound(config, policy, i, overrides));
   }
 
   const times = results.map((r) => r.state.time_elapsed_s).sort((a, b) => a - b);
