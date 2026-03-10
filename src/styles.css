@@ -208,6 +208,13 @@ p {
   color: #30281d;
 }
 
+.policy-override-note {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--accent);
+  font-weight: 700;
+}
+
 .policy-columns {
   display: grid;
   grid-template-columns: 1.3fr 1fr;
@@ -251,6 +258,16 @@ p {
   font-size: 12px;
   line-height: 1.4;
   color: var(--muted);
+}
+
+.support-note {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.knobs-disabled {
+  opacity: 0.82;
 }
 
 .controls {

@@ -3,18 +3,27 @@ import {
   ALL_POLICIES,
   AdaptiveSafePolicy,
   buildGraph,
+  createDefaultPolicyOverrides,
   createDefaultGraph,
   createDefaultSimulationConfig,
   estimateFirmwarePlan,
+  policySupportsFixedRouteExperiment,
+  policySupportsOverrides,
   simulateBatch,
-  simulateRound
+  simulateRound,
+  withPolicyOverrides
 } from "./index";
 import type {
+  BlackLockCarryMode,
   BatchResult,
+  BranchOrderMode,
   BranchId,
+  ColorDropTimingMode,
   Edge,
   Graph,
   LineType,
+  LockClearStrategyMode,
+  PolicyOverrides,
   ResourceColor,
   SimulationConfig,
   SimulationResult,
@@ -72,6 +81,14 @@ const SECTION_INFO: Record<string, SectionInfo> = {
       "Carry Capacity limits how many total items the robot can hold at once. Locks and colored resources both consume capacity.",
       "Batch Runs controls how many seeded simulations are used during ranking. Higher values make comparisons more stable but also slower.",
       "Playback Speed affects only the trace animation in the browser. It does not change simulated robot time or batch statistics."
+    ]
+  },
+  "strategy-knobs": {
+    title: "Strategy Knobs",
+    body: [
+      "This section lets you override specific policy decisions without replacing the whole policy.",
+      "You can control how supported policies carry black locks, and the fixed-route policy also exposes branch order, colored-resource drop timing, and whether to clear all locks before collecting resources.",
+      "Only policies that explicitly support overrides will use these settings. Unsupported policies keep their built-in behavior."
     ]
   },
   "round-actions": {
@@ -373,6 +390,48 @@ app.innerHTML = `
       </div>
     </section>
 
+    <section class="section-card" data-section="strategy-knobs" id="strategyKnobsCard">
+      <div class="section-heading">
+        <div>
+          <h2>Strategy Knobs</h2>
+          <p>User-controlled decision rules layered on supported policies.</p>
+        </div>
+        <button class="info-button" type="button" data-info-target="strategy-knobs" aria-expanded="false">Info</button>
+      </div>
+      <div class="info-panel hidden" id="info-strategy-knobs"></div>
+      <div class="controls">
+        <label id="blackLockCarryControl">Black Lock Carry
+          <select id="blackLockCarry">
+            <option value="auto">Policy default / Auto</option>
+            <option value="single">One-by-one</option>
+            <option value="fill_capacity">Use capacity fully</option>
+          </select>
+        </label>
+        <label id="branchOrderControl">Branch Order
+          <select id="branchOrder">
+            <option value="yellow_blue_green_red">YELLOW -> BLUE -> GREEN -> RED</option>
+            <option value="red_yellow_blue_green">RED -> YELLOW -> BLUE -> GREEN</option>
+            <option value="blue_green_yellow_red">BLUE -> GREEN -> YELLOW -> RED</option>
+            <option value="green_blue_yellow_red">GREEN -> BLUE -> YELLOW -> RED</option>
+          </select>
+        </label>
+        <label id="colorDropTimingControl">Color Drop Timing
+          <select id="colorDropTiming">
+            <option value="auto">Policy default / Auto</option>
+            <option value="immediate">Immediate</option>
+            <option value="when_full">When full</option>
+          </select>
+        </label>
+        <label id="lockClearStrategyControl">Lock Clear Strategy
+          <select id="lockClearStrategy">
+            <option value="auto">Policy default / Auto</option>
+            <option value="clear_all_first">Take all black locks first</option>
+          </select>
+        </label>
+      </div>
+      <p id="strategyKnobsMessage" class="support-note"></p>
+    </section>
+
     <section class="section-card" data-section="round-actions">
       <div class="section-heading">
         <div>
@@ -545,6 +604,16 @@ if (!context) throw new Error("Canvas context unavailable");
 const ctx: CanvasRenderingContext2D = context;
 
 const policySelect = document.getElementById("policy") as HTMLSelectElement;
+const blackLockCarryControl = document.getElementById("blackLockCarryControl") as HTMLLabelElement;
+const blackLockCarrySelect = document.getElementById("blackLockCarry") as HTMLSelectElement;
+const branchOrderControl = document.getElementById("branchOrderControl") as HTMLLabelElement;
+const branchOrderSelect = document.getElementById("branchOrder") as HTMLSelectElement;
+const colorDropTimingControl = document.getElementById("colorDropTimingControl") as HTMLLabelElement;
+const colorDropTimingSelect = document.getElementById("colorDropTiming") as HTMLSelectElement;
+const lockClearStrategyControl = document.getElementById("lockClearStrategyControl") as HTMLLabelElement;
+const lockClearStrategySelect = document.getElementById("lockClearStrategy") as HTMLSelectElement;
+const strategyKnobsCard = document.getElementById("strategyKnobsCard") as HTMLElement;
+const strategyKnobsMessage = document.getElementById("strategyKnobsMessage") as HTMLParagraphElement;
 const seedInput = document.getElementById("seed") as HTMLInputElement;
 const capacityInput = document.getElementById("capacity") as HTMLInputElement;
 const runsInput = document.getElementById("runs") as HTMLInputElement;
@@ -579,6 +648,11 @@ policySelect.value = AdaptiveSafePolicy.name;
 
 let latestResult: SimulationResult | null = null;
 let latestBatch: BatchResult[] = [];
+let currentOverrides: PolicyOverrides = createDefaultPolicyOverrides();
+blackLockCarrySelect.value = currentOverrides.black_lock_carry_mode;
+branchOrderSelect.value = currentOverrides.branch_order;
+colorDropTimingSelect.value = currentOverrides.color_drop_timing;
+lockClearStrategySelect.value = currentOverrides.lock_clear_strategy;
 let robotPose: RobotPose = { ...nodePoint(graph.startNodeId), heading: -Math.PI / 2 };
 let visualState: VisualState = emptyVisualState();
 let animationHandle = 0;
@@ -634,6 +708,20 @@ function syncInfoPanels(): void {
 
 function renderPolicyDetails(name: string): void {
   const info = POLICY_INFO[name] ?? POLICY_INFO[AdaptiveSafePolicy.name];
+  const supportsOverrides = policySupportsOverrides(name);
+  const fixedRouteExperiment = policySupportsFixedRouteExperiment(name);
+  const overrideLines: string[] = [];
+  if (supportsOverrides) {
+    overrideLines.push(`black lock carry = ${currentOverrides.black_lock_carry_mode}`);
+  }
+  if (fixedRouteExperiment) {
+    overrideLines.push(`branch order = ${currentOverrides.branch_order}`);
+    overrideLines.push(`color drop timing = ${currentOverrides.color_drop_timing}`);
+    overrideLines.push(`lock clear strategy = ${currentOverrides.lock_clear_strategy}`);
+  }
+  const overrideSummary = overrideLines.length
+    ? `<div class="policy-override-note">${overrideLines.map((line) => `<p>${line}</p>`).join("")}</div>`
+    : "";
   policyDetailsEl.innerHTML = `
     <div class="policy-header">
       <div>
@@ -643,6 +731,7 @@ function renderPolicyDetails(name: string): void {
       <p class="policy-summary">${info.summary}</p>
     </div>
     <p class="policy-why">${info.whyUseIt}</p>
+    ${overrideSummary}
     <div class="policy-columns">
       <div>
         <h4>Decision Flow</h4>
@@ -662,6 +751,47 @@ function renderPolicyDetails(name: string): void {
       </div>
     </div>
   `;
+}
+
+function syncStrategyKnobs(): void {
+  const policyName = policySelect.value;
+  const supportsOverrides = policySupportsOverrides(policyName);
+  const supportsFixedRouteExperiment = policySupportsFixedRouteExperiment(policyName);
+  strategyKnobsCard.classList.toggle("knobs-disabled", !supportsOverrides);
+  blackLockCarryControl.classList.toggle("hidden", !supportsOverrides);
+  blackLockCarrySelect.disabled = !supportsOverrides;
+  branchOrderControl.classList.toggle("hidden", !supportsFixedRouteExperiment);
+  branchOrderSelect.disabled = !supportsFixedRouteExperiment;
+  colorDropTimingControl.classList.toggle("hidden", !supportsFixedRouteExperiment);
+  colorDropTimingSelect.disabled = !supportsFixedRouteExperiment;
+  lockClearStrategyControl.classList.toggle("hidden", !supportsFixedRouteExperiment);
+  lockClearStrategySelect.disabled = !supportsFixedRouteExperiment;
+
+  if (supportsFixedRouteExperiment) {
+    strategyKnobsMessage.textContent =
+      "This fixed-route policy supports black-lock carry, branch order, color drop timing, and lock-clear sequencing overrides.";
+  } else if (supportsOverrides) {
+    strategyKnobsMessage.textContent = "This policy supports black-lock carry overrides for testing.";
+  } else {
+    strategyKnobsMessage.textContent = "This policy uses its built-in behavior. Strategy knobs are not applied.";
+  }
+}
+
+function currentPolicyOverrides(): PolicyOverrides {
+  return {
+    ...currentOverrides,
+    black_lock_carry_mode: blackLockCarrySelect.value as BlackLockCarryMode,
+    branch_order: branchOrderSelect.value as BranchOrderMode,
+    color_drop_timing: colorDropTimingSelect.value as ColorDropTimingMode,
+    lock_clear_strategy: lockClearStrategySelect.value as LockClearStrategyMode
+  };
+}
+
+function selectedExecutionPolicy(): StrategyPolicy {
+  const basePolicy = getPolicyByName(policySelect.value);
+  const overrides = currentPolicyOverrides();
+  currentOverrides = overrides;
+  return withPolicyOverrides(basePolicy, overrides);
 }
 
 function renderGameStrategy(): void {
@@ -1047,7 +1177,7 @@ function drawMap(): void {
 
 function summarizeResult(result: SimulationResult): void {
   const s = result.state;
-  summaryEl.textContent = [
+  const lines = [
     `policy=${result.policy_name}`,
     `seed=${result.seed}`,
     `score=${s.score}`,
@@ -1056,7 +1186,20 @@ function summarizeResult(result: SimulationResult): void {
     `returned=${s.returned_to_start}`,
     `violations=${result.legality_violations.length}`,
     `trace_steps=${result.trace.length}`
-  ].join("\n");
+  ];
+
+  if (policySupportsOverrides(policySelect.value)) {
+    lines.splice(2, 0, `black_lock_carry=${currentPolicyOverrides().black_lock_carry_mode}`);
+  } else {
+    lines.splice(2, 0, "black_lock_carry=unsupported(policy default)");
+  }
+  if (policySupportsFixedRouteExperiment(policySelect.value)) {
+    lines.splice(3, 0, `branch_order=${currentPolicyOverrides().branch_order}`);
+    lines.splice(4, 0, `color_drop_timing=${currentPolicyOverrides().color_drop_timing}`);
+    lines.splice(5, 0, `lock_clear_strategy=${currentPolicyOverrides().lock_clear_strategy}`);
+  }
+
+  summaryEl.textContent = lines.join("\n");
 
   randomizationEl.textContent = Object.entries(s.branch_to_resources)
     .map(([branch, colors]) => `${branch}: ${colors.join(", ")}`)
@@ -1167,7 +1310,7 @@ function deriveVisualState(result: SimulationResult, stepIdx: number, progressIn
 function runRound(): void {
   stopTracePlayback(true);
   const config = configFromInputs();
-  const policy = getPolicyByName(policySelect.value);
+  const policy = selectedExecutionPolicy();
   const seed = Math.max(1, Number(seedInput.value) || 1);
   const result = simulateRound(config, policy, seed);
   latestResult = result;
@@ -1191,6 +1334,7 @@ function runRound(): void {
   }
   updateLivePanel(config.timeout_s);
   drawMap();
+  renderPolicyDetails(policySelect.value);
   summarizeResult(result);
 }
 
@@ -1323,7 +1467,7 @@ async function runBatch(): Promise<void> {
   const config = configFromInputs();
   const runs = Math.max(10, Number(runsInput.value) || 100);
   try {
-    latestBatch = ALL_POLICIES.map((p) => simulateBatch(config, p, runs));
+    latestBatch = ALL_POLICIES.map((p) => simulateBatch(config, withPolicyOverrides(p, currentPolicyOverrides()), runs));
     summarizeBatch(latestBatch);
   } finally {
     showBatchToast(false);
@@ -1410,6 +1554,27 @@ speedInput.oninput = () => {
 };
 
 policySelect.onchange = () => {
+  syncStrategyKnobs();
+  renderPolicyDetails(policySelect.value);
+};
+
+blackLockCarrySelect.onchange = () => {
+  currentOverrides = currentPolicyOverrides();
+  renderPolicyDetails(policySelect.value);
+};
+
+branchOrderSelect.onchange = () => {
+  currentOverrides = currentPolicyOverrides();
+  renderPolicyDetails(policySelect.value);
+};
+
+colorDropTimingSelect.onchange = () => {
+  currentOverrides = currentPolicyOverrides();
+  renderPolicyDetails(policySelect.value);
+};
+
+lockClearStrategySelect.onchange = () => {
+  currentOverrides = currentPolicyOverrides();
   renderPolicyDetails(policySelect.value);
 };
 
@@ -1515,6 +1680,7 @@ runBatchBtn.onclick = () => {
 
 refreshMapEditorControls();
 syncInfoPanels();
+syncStrategyKnobs();
 renderPolicyDetails(policySelect.value);
 renderGameStrategy();
 drawMap();

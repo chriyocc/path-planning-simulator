@@ -189,6 +189,22 @@ export interface StrategyPolicy {
   nextAction(state: RoundState, observation: Observation, config: SimulationConfig): Action;
 }
 
+export type BlackLockCarryMode = "auto" | "single" | "fill_capacity";
+export type BranchOrderMode =
+  | "yellow_blue_green_red"
+  | "red_yellow_blue_green"
+  | "blue_green_yellow_red"
+  | "green_blue_yellow_red";
+export type ColorDropTimingMode = "auto" | "immediate" | "when_full";
+export type LockClearStrategyMode = "auto" | "clear_all_first";
+
+export interface PolicyOverrides {
+  black_lock_carry_mode: BlackLockCarryMode;
+  branch_order: BranchOrderMode;
+  color_drop_timing: ColorDropTimingMode;
+  lock_clear_strategy: LockClearStrategyMode;
+}
+
 export interface RouteRow {
   from_node: string;
   to_node: string;

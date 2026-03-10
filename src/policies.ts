@@ -1,9 +1,29 @@
-import type { Action, BranchId, RoundState, SimulationConfig, StrategyPolicy } from "./types";
+import type {
+  Action,
+  BranchId,
+  BranchOrderMode,
+  PolicyOverrides,
+  RoundState,
+  SimulationConfig,
+  StrategyPolicy
+} from "./types";
 import { computeOptimalPolicy } from "./planner";
 import { GraphRouter } from "./router";
 
 const BRANCHES: BranchId[] = ["RED", "YELLOW", "BLUE", "GREEN"];
 const FIXED_BRANCH_ORDER: BranchId[] = ["YELLOW", "BLUE", "GREEN", "RED"];
+const FIXED_BRANCH_ORDERS: Record<BranchOrderMode, BranchId[]> = {
+  yellow_blue_green_red: ["YELLOW", "BLUE", "GREEN", "RED"],
+  red_yellow_blue_green: ["RED", "YELLOW", "BLUE", "GREEN"],
+  blue_green_yellow_red: ["BLUE", "GREEN", "YELLOW", "RED"],
+  green_blue_yellow_red: ["GREEN", "BLUE", "YELLOW", "RED"]
+};
+const DEFAULT_POLICY_OVERRIDES: PolicyOverrides = {
+  black_lock_carry_mode: "auto",
+  branch_order: "yellow_blue_green_red",
+  color_drop_timing: "auto",
+  lock_clear_strategy: "auto"
+};
 
 function nearestBlackZone(router: GraphRouter, fromNode: string, blackZones: string[]): string {
   let nearest = blackZones[0];
@@ -198,9 +218,20 @@ function maybeReturnOrEnd(state: RoundState, config: SimulationConfig): Action {
   return { type: "END_ROUND" };
 }
 
-function firstLockedBranchInOrder(state: RoundState, order: BranchId[]): BranchId | null {
+function firstLockedBranchInOrder(state: RoundState, order: BranchId[], blockedBranches: BranchId[] = []): BranchId | null {
   for (const branchId of order) {
+    if (blockedBranches.includes(branchId)) continue;
     if (!state.locks_cleared[branchId]) {
+      return branchId;
+    }
+  }
+  return null;
+}
+
+function firstUnlockedPendingBranchInOrder(state: RoundState, config: SimulationConfig, order: BranchId[]): BranchId | null {
+  for (const branchId of order) {
+    if (!state.locks_cleared[branchId]) continue;
+    if (pendingSlotsForBranch(state, config, branchId).length > 0) {
       return branchId;
     }
   }
@@ -220,6 +251,81 @@ function nextPickInFixedOrder(state: RoundState, config: SimulationConfig, order
     }
   }
   return null;
+}
+
+function fixedRouteActionCore(
+  state: RoundState,
+  observation: Parameters<StrategyPolicy["nextAction"]>[1],
+  config: SimulationConfig,
+  order: BranchId[],
+  blackLockCarryMode: PolicyOverrides["black_lock_carry_mode"],
+  colorDropTiming: PolicyOverrides["color_drop_timing"],
+  lockClearStrategy: PolicyOverrides["lock_clear_strategy"]
+): Action {
+  const router = new GraphRouter(config.map, config.robot);
+  const held = heldLocks(state);
+  const pendingUnlockedBranch = firstUnlockedPendingBranchInOrder(state, config, order);
+  const nextLockedBranch = firstLockedBranchInOrder(state, order, held);
+
+  if (held.length > 0) {
+    if (
+      blackLockCarryMode === "fill_capacity" &&
+      state.inventory.length === 0 &&
+      held.length < config.robot.carry_capacity &&
+      pendingUnlockedBranch === null &&
+      nextLockedBranch
+    ) {
+      return { type: "PICK_LOCK", branchId: nextLockedBranch };
+    }
+    return { type: "DROP_LOCK", branchId: held[0] };
+  }
+
+  const immediateDrop = dropColorAtCurrentZone(state, config);
+  if (immediateDrop) {
+    return immediateDrop;
+  }
+
+  if (state.inventory.length >= config.robot.carry_capacity) {
+    return chooseDropColor(state, config, router, "nearest");
+  }
+
+  if (colorDropTiming === "immediate" && state.inventory.length > 0) {
+    return chooseDropColor(state, config, router, "nearest");
+  }
+
+  if (lockClearStrategy === "clear_all_first" && nextLockedBranch) {
+    return { type: "PICK_LOCK", branchId: nextLockedBranch };
+  }
+
+  if (pendingUnlockedBranch) {
+    const nextPick = nextPickInFixedOrder(state, config, order);
+    if (nextPick) {
+      return nextPick;
+    }
+  }
+
+  if (nextLockedBranch) {
+    return { type: "PICK_LOCK", branchId: nextLockedBranch };
+  }
+
+  const nextPick = nextPickInFixedOrder(state, config, order);
+  if (nextPick) {
+    return nextPick;
+  }
+
+  if (state.inventory.length > 0) {
+    return chooseDropColor(state, config, router, "nearest");
+  }
+
+  if (state.placed_resources.length === 8) {
+    return maybeReturnOrEnd(state, config);
+  }
+
+  if (observation.remaining_time_s < 10) {
+    return { type: "END_ROUND" };
+  }
+
+  return maybeReturnOrEnd(state, config);
 }
 
 let optimalPathCache: Action[] | null = null;
@@ -384,50 +490,166 @@ export const AdaptiveSafePolicy: StrategyPolicy = {
 export const FixedRouteCapacity2Policy: StrategyPolicy = {
   name: "FixedRoute_Capacity2",
   nextAction(state, observation, config) {
-    const router = new GraphRouter(config.map, config.robot);
-    const held = heldLocks(state);
-
-    if (held.length > 0) {
-      return { type: "DROP_LOCK", branchId: held[0] };
-    }
-
-    const immediateDrop = dropColorAtCurrentZone(state, config);
-    if (immediateDrop) {
-      return immediateDrop;
-    }
-
-    const nextLockedBranch = firstLockedBranchInOrder(state, FIXED_BRANCH_ORDER);
-    if (nextLockedBranch) {
-      if (state.inventory.length >= config.robot.carry_capacity) {
-        return chooseDropColor(state, config, router, "nearest");
-      }
-      return { type: "PICK_LOCK", branchId: nextLockedBranch };
-    }
-
-    if (state.inventory.length >= config.robot.carry_capacity) {
-      return chooseDropColor(state, config, router, "nearest");
-    }
-
-    const nextPick = nextPickInFixedOrder(state, config, FIXED_BRANCH_ORDER);
-    if (nextPick) {
-      return nextPick;
-    }
-
-    if (state.inventory.length > 0) {
-      return chooseDropColor(state, config, router, "nearest");
-    }
-
-    if (state.placed_resources.length === 8) {
-      return maybeReturnOrEnd(state, config);
-    }
-
-    if (observation.remaining_time_s < 10) {
-      return { type: "END_ROUND" };
-    }
-
-    return maybeReturnOrEnd(state, config);
+    return fixedRouteActionCore(
+      state,
+      observation,
+      config,
+      FIXED_BRANCH_ORDER,
+      DEFAULT_POLICY_OVERRIDES.black_lock_carry_mode,
+      DEFAULT_POLICY_OVERRIDES.color_drop_timing,
+      DEFAULT_POLICY_OVERRIDES.lock_clear_strategy
+    );
   }
 };
+
+const OVERRIDE_CAPABLE_POLICY_NAMES = new Set<string>([BusRouteParametricPolicy.name, FixedRouteCapacity2Policy.name]);
+
+export function policySupportsOverrides(policyName: string): boolean {
+  return OVERRIDE_CAPABLE_POLICY_NAMES.has(policyName);
+}
+
+export function createDefaultPolicyOverrides(): PolicyOverrides {
+  return { ...DEFAULT_POLICY_OVERRIDES };
+}
+
+export function policySupportsFixedRouteExperiment(policyName: string): boolean {
+  return policyName === FixedRouteCapacity2Policy.name;
+}
+
+function normalizeOverrides(overrides?: Partial<PolicyOverrides>): PolicyOverrides {
+  return {
+    ...DEFAULT_POLICY_OVERRIDES,
+    ...overrides
+  };
+}
+
+function busRouteActionWithOverrides(
+  state: RoundState,
+  observation: Parameters<StrategyPolicy["nextAction"]>[1],
+  config: SimulationConfig,
+  overrides: PolicyOverrides
+): Action {
+  if (overrides.black_lock_carry_mode === "auto") {
+    return BusRouteParametricPolicy.nextAction(state, observation, config);
+  }
+
+  const router = new GraphRouter(config.map, config.robot);
+  const held = heldLocks(state);
+
+  if (held.length > 0) {
+    if (
+      overrides.black_lock_carry_mode === "fill_capacity" &&
+      state.inventory.length === 0 &&
+      held.length < config.robot.carry_capacity
+    ) {
+      const candidate = chooseNextLocked(state, config, router, "value", 0, held);
+      if (candidate) {
+        return { type: "PICK_LOCK", branchId: candidate };
+      }
+    }
+    return { type: "DROP_LOCK", branchId: held[0] };
+  }
+
+  const immediateDrop = dropColorAtCurrentZone(state, config);
+  if (immediateDrop) {
+    return immediateDrop;
+  }
+
+  const nextLocked = chooseNextLocked(state, config, router, "value");
+  if (nextLocked) {
+    return { type: "PICK_LOCK", branchId: nextLocked };
+  }
+
+  if (state.inventory.length >= config.robot.carry_capacity) {
+    return chooseDropColor(state, config, router, "value");
+  }
+
+  const pick = chooseNextPick(state, config, router, "value");
+  if (pick) {
+    return pick;
+  }
+
+  if (state.inventory.length > 0) {
+    return chooseDropColor(state, config, router, "value");
+  }
+
+  if (state.placed_resources.length === 8) {
+    return maybeReturnOrEnd(state, config);
+  }
+
+  if (observation.remaining_time_s < 12) {
+    return { type: "END_ROUND" };
+  }
+
+  return { type: "END_ROUND" };
+}
+
+function fixedRouteActionWithOverrides(
+  state: RoundState,
+  observation: Parameters<StrategyPolicy["nextAction"]>[1],
+  config: SimulationConfig,
+  overrides: PolicyOverrides
+): Action {
+  if (
+    overrides.black_lock_carry_mode === "auto" &&
+    overrides.branch_order === DEFAULT_POLICY_OVERRIDES.branch_order &&
+    overrides.color_drop_timing === DEFAULT_POLICY_OVERRIDES.color_drop_timing &&
+    overrides.lock_clear_strategy === DEFAULT_POLICY_OVERRIDES.lock_clear_strategy
+  ) {
+    return FixedRouteCapacity2Policy.nextAction(state, observation, config);
+  }
+  return fixedRouteActionCore(
+    state,
+    observation,
+    config,
+    FIXED_BRANCH_ORDERS[overrides.branch_order],
+    overrides.black_lock_carry_mode,
+    overrides.color_drop_timing,
+    overrides.lock_clear_strategy
+  );
+}
+
+export function withPolicyOverrides(basePolicy: StrategyPolicy, overrides?: Partial<PolicyOverrides>): StrategyPolicy {
+  const normalized = normalizeOverrides(overrides);
+  if (!policySupportsOverrides(basePolicy.name)) {
+    return basePolicy;
+  }
+
+  const lockSuffix =
+    normalized.black_lock_carry_mode === "auto"
+      ? "auto"
+      : normalized.black_lock_carry_mode === "single"
+        ? "single"
+        : "fill";
+  const branchSuffix = normalized.branch_order
+    .split("_")
+    .map((part) => part[0])
+    .join("");
+  const dropSuffix =
+    normalized.color_drop_timing === "auto"
+      ? "auto"
+      : normalized.color_drop_timing === "immediate"
+        ? "imm"
+        : "full";
+  const lockPhaseSuffix = normalized.lock_clear_strategy === "auto" ? "auto" : "alllocks";
+  const nameSuffix =
+    basePolicy.name === FixedRouteCapacity2Policy.name
+      ? `locks:${lockSuffix}|order:${branchSuffix}|drop:${dropSuffix}|phase:${lockPhaseSuffix}`
+      : `locks:${lockSuffix}`;
+
+  return {
+    name: `${basePolicy.name}[${nameSuffix}]`,
+    nextAction(state, observation, config) {
+      if (basePolicy.name === BusRouteParametricPolicy.name) {
+        return busRouteActionWithOverrides(state, observation, config, normalized);
+      }
+      if (basePolicy.name === FixedRouteCapacity2Policy.name) {
+        return fixedRouteActionWithOverrides(state, observation, config, normalized);
+      }
+      return basePolicy.nextAction(state, observation, config);
+    }
+  };
+}
 
 export const ALL_POLICIES: StrategyPolicy[] = [
   BaselineSingleCarryPolicy,

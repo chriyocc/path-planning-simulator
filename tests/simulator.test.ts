@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { BaselineSingleCarryPolicy, BusRouteParametricPolicy, FixedRouteCapacity2Policy, ValueAwareDeadlinePolicy, OptimalOmniscientPolicy } from "../src/policies";
+import {
+  BaselineSingleCarryPolicy,
+  BusRouteParametricPolicy,
+  FixedRouteCapacity2Policy,
+  ValueAwareDeadlinePolicy,
+  OptimalOmniscientPolicy,
+  withPolicyOverrides
+} from "../src/policies";
 import { createDefaultGraph } from "../src/map";
 import { estimateFirmwarePlan } from "../src/firmware";
 import { GraphRouter } from "../src/router";
@@ -226,6 +233,214 @@ describe("policy comparisons", () => {
 
     expect(unlockOrder(run1)).toEqual(["YELLOW", "BLUE", "GREEN", "RED"]);
     expect(unlockOrder(run2)).toEqual(["YELLOW", "BLUE", "GREEN", "RED"]);
+  });
+
+  it("bus policy fill-capacity override chains an extra lock instead of dropping immediately", () => {
+    const cfg = config();
+    cfg.robot.carry_capacity = 2;
+    const state: RoundState = {
+      current_node: "LOCK_YELLOW",
+      branch_to_resources: randomizeRound(1).branch_to_resources,
+      locks_cleared: { RED: false, YELLOW: false, BLUE: false, GREEN: false },
+      picked_slots: {},
+      inventory: [],
+      holding_locks_for_branches: ["YELLOW"],
+      holding_lock_for_branch: "YELLOW",
+      placed_locks: [],
+      placed_resources: [],
+      score: 0,
+      time_elapsed_s: 0,
+      started_navigation: true,
+      reached_main_junction: true,
+      completed: false,
+      returned_to_start: false
+    };
+    const observation: Observation = {
+      remaining_time_s: cfg.timeout_s,
+      unlocked_branches: [],
+      locked_branches: ["RED", "YELLOW", "BLUE", "GREEN"],
+      inventory_count: 1,
+      all_resources_delivered: false
+    };
+
+    const action = withPolicyOverrides(BusRouteParametricPolicy, {
+      black_lock_carry_mode: "fill_capacity"
+    }).nextAction({ ...state }, observation, cfg);
+
+    expect(action.type).toBe("PICK_LOCK");
+    expect(action.branchId).not.toBe("YELLOW");
+  });
+
+  it("bus policy single override drops immediately when already holding one lock", () => {
+    const cfg = config();
+    cfg.robot.carry_capacity = 3;
+    const state: RoundState = {
+      current_node: "LOCK_YELLOW",
+      branch_to_resources: randomizeRound(2).branch_to_resources,
+      locks_cleared: { RED: false, YELLOW: false, BLUE: false, GREEN: false },
+      picked_slots: {},
+      inventory: [],
+      holding_locks_for_branches: ["YELLOW"],
+      holding_lock_for_branch: "YELLOW",
+      placed_locks: [],
+      placed_resources: [],
+      score: 0,
+      time_elapsed_s: 0,
+      started_navigation: true,
+      reached_main_junction: true,
+      completed: false,
+      returned_to_start: false
+    };
+    const observation: Observation = {
+      remaining_time_s: cfg.timeout_s,
+      unlocked_branches: [],
+      locked_branches: ["RED", "YELLOW", "BLUE", "GREEN"],
+      inventory_count: 1,
+      all_resources_delivered: false
+    };
+
+    const action = withPolicyOverrides(BusRouteParametricPolicy, {
+      black_lock_carry_mode: "single"
+    }).nextAction({ ...state }, observation, cfg);
+
+    expect(action).toEqual({ type: "DROP_LOCK", branchId: "YELLOW" });
+  });
+
+  it("fixed route fill-capacity override picks multiple locks before the first drop", () => {
+    const cfg = config();
+    cfg.robot.carry_capacity = 2;
+    const result = simulateRound(
+      cfg,
+      withPolicyOverrides(FixedRouteCapacity2Policy, { black_lock_carry_mode: "fill_capacity" }),
+      1
+    );
+    const firstDropIndex = result.trace.findIndex((step) => step.note === "lock_deposited");
+    const lockGripsBeforeDrop = result.trace
+      .slice(0, firstDropIndex)
+      .filter((step) => step.note === "lock_gripped")
+      .map((step) => step.action.branchId);
+
+    expect(lockGripsBeforeDrop).toEqual(["YELLOW", "BLUE"]);
+  });
+
+  it("fixed route branch-order overrides change lock unlock order", () => {
+    const cases = [
+      { branch_order: "yellow_blue_green_red", expected: ["YELLOW", "BLUE", "GREEN", "RED"] },
+      { branch_order: "red_yellow_blue_green", expected: ["RED", "YELLOW", "BLUE", "GREEN"] },
+      { branch_order: "blue_green_yellow_red", expected: ["BLUE", "GREEN", "YELLOW", "RED"] },
+      { branch_order: "green_blue_yellow_red", expected: ["GREEN", "BLUE", "YELLOW", "RED"] }
+    ] as const;
+
+    for (const testCase of cases) {
+      const result = simulateRound(
+        config(),
+        withPolicyOverrides(FixedRouteCapacity2Policy, { branch_order: testCase.branch_order }),
+        1
+      );
+      const unlockOrder = result.trace
+        .filter((step) => step.note === "lock_gripped")
+        .map((step) => step.action.branchId);
+      expect(unlockOrder).toEqual(testCase.expected);
+    }
+  });
+
+  it("fixed route immediate color drop timing scores earlier than auto on the same seed", () => {
+    const autoResult = simulateRound(config(), withPolicyOverrides(FixedRouteCapacity2Policy, { color_drop_timing: "auto" }), 1);
+    const immediateResult = simulateRound(
+      config(),
+      withPolicyOverrides(FixedRouteCapacity2Policy, { color_drop_timing: "immediate" }),
+      1
+    );
+    const firstDropIndex = (result: ReturnType<typeof simulateRound>) =>
+      result.trace.findIndex((step) => step.note?.startsWith("dropped_"));
+
+    expect(firstDropIndex(immediateResult)).toBeGreaterThanOrEqual(0);
+    expect(firstDropIndex(autoResult)).toBeGreaterThanOrEqual(0);
+    expect(firstDropIndex(immediateResult)).toBeLessThan(firstDropIndex(autoResult));
+  });
+
+  it("fixed route when-full color drop timing waits until capacity is full before first drop when pickups remain", () => {
+    const cfg = config();
+    cfg.robot.carry_capacity = 3;
+    const result = simulateRound(
+      cfg,
+      withPolicyOverrides(FixedRouteCapacity2Policy, { color_drop_timing: "when_full" }),
+      1
+    );
+    const firstDropIndex = result.trace.findIndex((step) => step.note?.startsWith("dropped_"));
+    const pickedBeforeFirstDrop = result.trace
+      .slice(0, firstDropIndex)
+      .filter((step) => step.note?.startsWith("picked_")).length;
+
+    expect(firstDropIndex).toBeGreaterThanOrEqual(0);
+    expect(pickedBeforeFirstDrop).toBe(3);
+  });
+
+  it("fixed route clear-all-first lock strategy clears every lock before the first resource pickup", () => {
+    const result = simulateRound(
+      config(),
+      withPolicyOverrides(FixedRouteCapacity2Policy, { lock_clear_strategy: "clear_all_first" }),
+      1
+    );
+    const firstResourcePickIndex = result.trace.findIndex((step) => step.note?.startsWith("picked_"));
+    const lastLockGripIndex = result.trace
+      .map((step, index) => ({ step, index }))
+      .filter(({ step }) => step.note === "lock_gripped")
+      .at(-1)?.index ?? -1;
+
+    expect(firstResourcePickIndex).toBeGreaterThan(lastLockGripIndex);
+    expect(
+      result.trace.filter((step) => step.note === "lock_gripped").map((step) => step.action.branchId)
+    ).toEqual(["YELLOW", "BLUE", "GREEN", "RED"]);
+  });
+
+  it("unsupported policies ignore overrides and keep their original name", () => {
+    const wrapped = withPolicyOverrides(BaselineSingleCarryPolicy, {
+      black_lock_carry_mode: "fill_capacity",
+      branch_order: "green_blue_yellow_red",
+      color_drop_timing: "immediate",
+      lock_clear_strategy: "clear_all_first"
+    });
+    expect(wrapped).toBe(BaselineSingleCarryPolicy);
+    expect(wrapped.name).toBe(BaselineSingleCarryPolicy.name);
+  });
+
+  it("bus route ignores fixed-route-only knobs and still obeys black-lock carry override", () => {
+    const cfg = config();
+    cfg.robot.carry_capacity = 3;
+    const state: RoundState = {
+      current_node: "LOCK_YELLOW",
+      branch_to_resources: randomizeRound(2).branch_to_resources,
+      locks_cleared: { RED: false, YELLOW: false, BLUE: false, GREEN: false },
+      picked_slots: {},
+      inventory: [],
+      holding_locks_for_branches: ["YELLOW"],
+      holding_lock_for_branch: "YELLOW",
+      placed_locks: [],
+      placed_resources: [],
+      score: 0,
+      time_elapsed_s: 0,
+      started_navigation: true,
+      reached_main_junction: true,
+      completed: false,
+      returned_to_start: false
+    };
+    const observation: Observation = {
+      remaining_time_s: cfg.timeout_s,
+      unlocked_branches: [],
+      locked_branches: ["RED", "YELLOW", "BLUE", "GREEN"],
+      inventory_count: 1,
+      all_resources_delivered: false
+    };
+
+    const action = withPolicyOverrides(BusRouteParametricPolicy, {
+      black_lock_carry_mode: "single",
+      branch_order: "green_blue_yellow_red",
+      color_drop_timing: "immediate",
+      lock_clear_strategy: "clear_all_first"
+    }).nextAction({ ...state }, observation, cfg);
+
+    expect(action).toEqual({ type: "DROP_LOCK", branchId: "YELLOW" });
   });
 
   it("higher carry capacity should not increase mean time for bus policy", { timeout: 15000 }, () => {
