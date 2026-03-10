@@ -5,7 +5,7 @@
   },
   {
     "guard": "holding_lock_for_branch != null",
-    "action": "Navigate to BLACK_ZONE and execute DROP_LOCK"
+    "action": "Navigate to nearest BLACK_ZONE node and execute DROP_LOCK"
   },
   {
     "guard": "all_resources_delivered && current_node != START",

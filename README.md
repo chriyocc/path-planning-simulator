@@ -1,64 +1,45 @@
-# RoboSurvivor 2026 Strategy Simulator
+# RoboSurvivor 2026 Path Planning Simulator
 
-Web + TypeScript topological simulator for RoboSurvivor 2026.
+Browser-based TypeScript simulator for comparing routing policies, visualizing traces, and exporting the two firmware-facing artifacts that are actually used downstream.
 
-## What it includes
-- Deterministic map graph and line-type edges.
-- Seeded randomization of 8 colored resources across 4 branches.
-- FSM-friendly action simulation with legality checks.
-- Five strategy policies:
+## What the app does
+
+- Simulates one RoboSurvivor round on a graph-based map with seeded branch randomization.
+- Compares five policies:
   - `Baseline_SingleCarry`
   - `BusRoute_Parametric`
   - `ValueAware_Deadline`
   - `AdaptiveSafe`
   - `Optimal_Omniscient`
-- Monte Carlo batch evaluation and policy ranking.
-- Visual playback on Canvas with map overlay and robot trace.
-- Editable map geometry in the browser.
-- Batch loading toast while Monte Carlo evaluation is running.
-- Firmware-facing exports:
+- Animates the robot trace on the canvas map.
+- Lets you edit node geometry and line types in the browser.
+- Exports:
   - `route_table.json`
   - `policy_rules.json`
-  - `fsm_contract.md`
 
-## Current map model
-- Four bottom branches contain cargo in this order:
-  - black lock
-  - first colored resource
-  - second colored resource
-- Resource pickup order is enforced per branch:
-  - slot 1 must be picked before slot 2
-- The top section contains two valid black lock drop zones:
-  - `BLACK_ZONE`
-  - `BLACK_ZONE_RIGHT`
-- The black-zone area is modeled as a rectangle with connecting top and bottom edges, and policies/simulator choose the nearest valid black zone for lock drops.
+## Artifact status
 
-## Current simulator rules
-- Carry capacity applies to total carried items:
-  - black locks
-  - colored resources
-- Multiple black locks can be carried if capacity allows.
-- Deposited locks are tracked by the exact black zone they were dropped into.
-- Colored resources can only be scored after the corresponding branch lock has been delivered.
-- If the robot is already at the correct color zone for a carried resource, the heuristic policies will unload immediately before leaving the zone.
+- `route_table.json` is necessary if you want the selected run converted into a node-by-node motion table for firmware.
+- `policy_rules.json` is necessary if you want compact guard/action rules alongside the route output.
+- `fsm_contract.md` was not required by the app runtime, not needed by the simulator UI, and not part of the practical export path, so it has been removed from the generated artifacts.
 
-## Policy notes
-- `Baseline_SingleCarry` is intentionally conservative and behaves like a one-by-one fallback policy.
-- `BusRoute_Parametric` is the main heuristic capacity-aware policy and can opportunistically chain a second lock when it is time-efficient.
-- `ValueAware_Deadline` is deadline-sensitive and prioritizes higher-value branches/resources under tighter time budgets.
-- `AdaptiveSafe` switches between conservative and deadline-aware heuristics based on remaining time.
-- `Optimal_Omniscient` uses the planner and assumes full knowledge of the randomized layout for benchmarking.
+## UI highlights
 
-## Run
+- Each major section includes an `Info` button with detailed explanations.
+- The selected policy now shows a plain-language explanation and its decision flow.
+- Trace playback supports pause/resume.
+- Batch mode ranks every policy on the same seed range for fair comparison.
+
+## Run locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open the local Vite URL in a browser.
+Open the local Vite URL in your browser.
 
-## Tests
+## Test
 
 ```bash
 npm test
@@ -70,19 +51,24 @@ npm test
 npm run build
 ```
 
-## Generate firmware artifacts
+## Generate artifacts
 
 ```bash
 npm run generate:artifacts
 ```
 
-Outputs are written to `artifacts/`.
+Generated files are written to [`artifacts/`](/Users/yoyojun/Documents/GitHub/path-planning-simulator/artifacts).
 
-## Development notes
-- Default carry capacity in the UI is `2`.
-- Default line speeds are configured in [src/simulator.ts](/Users/yoyojun/Documents/New%20project/src/simulator.ts), including the current `SINE` tuning.
-- The map editor updates node positions and recomputes edge distances from geometry.
+## Project structure
 
-## Rules gate
+- [`src/main.ts`](/Users/yoyojun/Documents/GitHub/path-planning-simulator/src/main.ts): browser UI, playback, exports, and map editor wiring.
+- [`src/policies.ts`](/Users/yoyojun/Documents/GitHub/path-planning-simulator/src/policies.ts): policy decision logic.
+- [`src/simulator.ts`](/Users/yoyojun/Documents/GitHub/path-planning-simulator/src/simulator.ts): round execution and legality checks.
+- [`src/firmware.ts`](/Users/yoyojun/Documents/GitHub/path-planning-simulator/src/firmware.ts): firmware-facing export data.
+- [`docs/rules_matrix.md`](/Users/yoyojun/Documents/GitHub/path-planning-simulator/docs/rules_matrix.md): sign-off checklist for rules and policy assumptions.
 
-Use [rules_matrix.md](/Users/yoyojun/Documents/New%20project/docs/rules_matrix.md) as the mandatory sign-off checklist before policy freeze.
+## Notes
+
+- Keep the same seed when comparing policies on a single layout.
+- Use batch mode instead of one-off runs when you want a meaningful policy comparison.
+- Geometry edits change edge distances, so route timing and heuristic choices can shift after map edits.

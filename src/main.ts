@@ -6,7 +6,6 @@ import {
   createDefaultGraph,
   createDefaultSimulationConfig,
   estimateFirmwarePlan,
-  generateFsmContractMarkdown,
   simulateBatch,
   simulateRound
 } from "./index";
@@ -41,8 +40,289 @@ interface VisualState {
   elapsed_s: number;
 }
 
+interface SectionInfo {
+  title: string;
+  body: string[];
+}
+
+interface PolicyInfo {
+  label: string;
+  summary: string;
+  whyUseIt: string;
+  decisionFlow: string[];
+  strengths: string[];
+  watchouts: string[];
+}
+
+interface StrategySection {
+  title: string;
+  summary: string;
+  bullets: string[];
+}
+
 const MAP_W_MM = 1500;
 const MAP_H_MM = 2000;
+
+const SECTION_INFO: Record<string, SectionInfo> = {
+  "simulation-controls": {
+    title: "Simulation Controls",
+    body: [
+      "Policy chooses the decision function that decides every next action during the round. Changing it swaps the full decision logic, not just a label.",
+      "Seed fixes the branch randomization. Using the same seed gives the same color placement, which makes comparisons between policies fair and repeatable.",
+      "Carry Capacity limits how many total items the robot can hold at once. Locks and colored resources both consume capacity.",
+      "Batch Runs controls how many seeded simulations are used during ranking. Higher values make comparisons more stable but also slower.",
+      "Playback Speed affects only the trace animation in the browser. It does not change simulated robot time or batch statistics."
+    ]
+  },
+  "round-actions": {
+    title: "Round Actions",
+    body: [
+      "Run Round executes one deterministic simulation using the selected policy, seed, and carry capacity. It refreshes the summary, map state, and trace data.",
+      "Randomize Seed + Run picks a new seed and immediately simulates one round so you can inspect a fresh branch layout without manually entering values.",
+      "Play Trace animates the latest simulated trace on the map. If there is no latest result yet, the app first runs a round.",
+      "Pause Trace freezes the animation at the current playback position. Pressing it again resumes from the same point instead of restarting the trace.",
+      "Run Batch evaluates every available policy across many seeds, then ranks them by performance so you can compare robustness instead of one lucky run."
+    ]
+  },
+  "policy-details": {
+    title: "Policy Details",
+    body: [
+      "This section explains the selected policy in plain language and shows its decision ladder. The explanation is derived from the actual policy code, so it maps to what the simulator is doing.",
+      "Summary tells you the policy's overall intent. Decision flow lists the main guards in the order they are evaluated.",
+      "Strengths call out where the policy tends to work well. Watchouts highlight assumptions or tradeoffs that can make a policy fragile in some layouts or deadlines."
+    ]
+  },
+  "artifacts": {
+    title: "Firmware Artifacts",
+    body: [
+      "route_table.json is necessary when you want to convert the chosen simulation trace into a node-by-node movement plan for firmware or downstream tools.",
+      "policy_rules.json is necessary when you want a compact list of runtime guard rules that explain what the controller should do when time, cargo, or recovery conditions change.",
+      "fsm_contract.md was only generated as human-readable documentation. It is not loaded by the web app, not referenced by tests as a required output, and not needed to run the simulator or export the firmware-facing data.",
+      "Because of that, this UI keeps only the two practical exports: route table and policy rules."
+    ]
+  },
+  "live-game-time": {
+    title: "Live Game Time",
+    body: [
+      "This panel mirrors the currently rendered trace frame, not just the final simulation result. During playback it updates continuously.",
+      "Elapsed is simulated round time already consumed. Remaining is the timeout budget left from the configured round limit.",
+      "The carrying line shows both held locks and colored resources because both matter for capacity and next-action choices.",
+      "Zone fill shows how many correctly placed resources have been scored into each color zone so far."
+    ]
+  },
+  "round-summary": {
+    title: "Round Summary",
+    body: [
+      "This is the concise end-of-round report for the most recent run.",
+      "Score is the points achieved by the policy under the current seed. Placed shows how many of the eight colored resources were delivered.",
+      "Returned indicates whether the robot made it back to START before the round ended. Violations reports legality or execution rule issues detected by the simulator.",
+      "Trace steps shows how many timed segments the round generated, which also determines how detailed playback will be."
+    ]
+  },
+  "branch-randomization": {
+    title: "Branch Randomization",
+    body: [
+      "Each branch contains two hidden colored resources. This panel reveals the seeded randomization used by the latest run.",
+      "Keeping the seed fixed is the correct way to compare policy behavior because it prevents the branch layout from changing between runs.",
+      "If a policy looks better on one seed, use batch mode to check whether that advantage holds over many layouts."
+    ]
+  },
+  "policy-ranking": {
+    title: "Policy Ranking",
+    body: [
+      "Batch ranking runs all policies over the same set of seeds and compares their aggregated results.",
+      "Mean score is the primary success indicator. Completion shows how often a policy finished all required deliveries.",
+      "Mean, p50, and p90 time show typical and slower-case completion behavior. Violations count tells you whether a policy tends to drift into illegal or unrecoverable situations."
+    ]
+  },
+  "game-strategy": {
+    title: "Game Strategy",
+    body: [
+      "This section summarizes the team's recommended competition approach from the strategy manual in docs.",
+      "The main idea is to precompute legal plans offline and let the robot infer the active layout onboard, instead of having a human tell the robot which layout was randomized.",
+      "That keeps the approach closer to the autonomy requirement while still using the small legal layout space effectively."
+    ]
+  },
+  "map-editor": {
+    title: "Map Editor",
+    body: [
+      "Edit Mode lets you adjust the graph that the simulator routes over. This changes the path geometry and recomputes distances from the edited node locations.",
+      "Node and Edge controls are precise editors for coordinates and line styles. Dragging nodes on the canvas is the faster direct-manipulation option.",
+      "Reset Map restores the built-in default topology. This is useful after experimentation because route timing and policy behavior both depend on the geometry."
+    ]
+  }
+};
+
+const GAME_STRATEGY: StrategySection[] = [
+  {
+    title: "Official Direction",
+    summary: "Build a legal, robust, high-scoring autonomous system without relying on gray-zone human input.",
+    bullets: [
+      "Use simulation to support planning, not to replace the official rules.",
+      "Prefer strategies that remain defensible under referee scrutiny.",
+      "Keep a fallback heuristic policy available if the main plan cannot be executed cleanly."
+    ]
+  },
+  {
+    title: "Main Competition Plan",
+    summary: "Precompute all legal layouts offline, then let the robot determine the active layout onboard.",
+    bullets: [
+      "The legal layout space is 576 because each row is a permutation of R/G/B/Y.",
+      "Compute a best high-level action plan for each legal layout before impound.",
+      "Store plan tables onboard and execute them through a line-following state machine.",
+      "If the exact layout is not yet known, continue with a safe heuristic while gathering more observations."
+    ]
+  },
+  {
+    title: "Why This Is Recommended",
+    summary: "It keeps online decision cost low while staying aligned with autonomy and field constraints.",
+    bullets: [
+      "No human needs to provide the layout number to the robot.",
+      "All environment interpretation stays onboard.",
+      "Planning and low-level control remain cleanly separated, which is better for firmware and debugging."
+    ]
+  },
+  {
+    title: "Operational Guardrails",
+    summary: "Setup-phase reading can help, but the robot must still be able to operate safely when setup data is incomplete or noisy.",
+    bullets: [
+      "Use setup time for legal calibration and optional onboard observation only.",
+      "Do not depend on laptops, code download, or manual layout-number entry after impound.",
+      "Treat manual layout selection as documented gray-zone behavior, not the official main strategy."
+    ]
+  }
+];
+
+const POLICY_INFO: Record<string, PolicyInfo> = {
+  Baseline_SingleCarry: {
+    label: "Baseline Single Carry",
+    summary: "A conservative fallback policy that behaves like a simple one-job-at-a-time operator.",
+    whyUseIt: "Use this when you want predictable, easy-to-understand behavior and a low-risk baseline for comparison.",
+    decisionFlow: [
+      "If the robot is already holding a lock, drop that lock into a black zone first.",
+      "If the robot is standing on the correct scoring zone for a carried color, unload immediately.",
+      "If the robot is carrying any resources, head to the nearest valid drop opportunity for those resources.",
+      "Otherwise choose the next locked branch using nearest-time logic, clear it, then pick resources in branch order.",
+      "When everything is collected and nothing is being carried, return home or end the round."
+    ],
+    strengths: [
+      "Easy to reason about and debug.",
+      "Rarely overcommits capacity.",
+      "Good reference policy when testing new heuristics."
+    ],
+    watchouts: [
+      "Leaves points on the table because it ignores value density.",
+      "Does not exploit multi-carry opportunities.",
+      "Can waste time with extra trips in richer layouts."
+    ]
+  },
+  BusRoute_Parametric: {
+    label: "Bus Route Parametric",
+    summary: "The main capacity-aware heuristic that tries to maximize points per travel time while opportunistically chaining efficient actions.",
+    whyUseIt: "Use this as the practical default when you want strong heuristic performance without omniscient planning.",
+    decisionFlow: [
+      "If the robot holds one lock, has no resources, and capacity allows, check whether picking a second lock before dropping both is faster than two separate black-zone trips.",
+      "Otherwise, if any lock is held, drop it at the nearest valid black zone.",
+      "If the robot is on a matching color zone, drop immediately before moving away.",
+      "Choose the next lock or resource using value-per-time style scoring rather than nearest distance alone.",
+      "When capacity is full or no better pickup remains, switch to scoring carried resources."
+    ],
+    strengths: [
+      "Uses carry capacity better than the baseline policy.",
+      "Balances branch value against travel cost.",
+      "Usually a strong all-around heuristic for realistic runs."
+    ],
+    watchouts: [
+      "More heuristic complexity means behavior is less obvious at a glance.",
+      "Still not globally optimal because it only evaluates local tradeoffs.",
+      "Can be sensitive to geometry edits that change travel ratios."
+    ]
+  },
+  ValueAware_Deadline: {
+    label: "Value Aware Deadline",
+    summary: "A time-sensitive policy that becomes more selective as the round clock shrinks.",
+    whyUseIt: "Use this when endgame timing matters more than exhaustive collection and you want the policy to protect late-round score conversion.",
+    decisionFlow: [
+      "If a lock is held, finish dropping it before doing anything else.",
+      "If the robot is already on a valid color zone, drop matching cargo immediately.",
+      "When remaining time is very low, stop opening new work and focus on scoring carried items or ending safely.",
+      "When the timer gets tighter, ignore low-value branches and prefer higher-point work.",
+      "While enough time remains, pick locks and resources using value-based scoring and unload when capacity is reached."
+    ],
+    strengths: [
+      "Handles late-round pressure better than purely distance-based policies.",
+      "Avoids some low-value detours near the deadline.",
+      "Good when finishing strong matters more than exploring everything."
+    ],
+    watchouts: [
+      "Can skip useful low-point work if the thresholds are too aggressive.",
+      "Threshold behavior may look abrupt when the timer crosses a cutoff.",
+      "Less intuitive than the baseline when debugging single runs."
+    ]
+  },
+  AdaptiveSafe: {
+    label: "Adaptive Safe",
+    summary: "A hybrid wrapper that starts safe, then switches to the deadline-aware strategy once enough time has elapsed.",
+    whyUseIt: "Use this when you want a guarded opening with a more aggressive closing strategy later in the round.",
+    decisionFlow: [
+      "While more than 300 seconds remain, delegate decisions to the conservative baseline logic.",
+      "Once the timer drops below that threshold, delegate decisions to the value-aware deadline policy.",
+      "The handoff lets the policy keep early-round behavior simple while still reacting to late-round urgency."
+    ],
+    strengths: [
+      "Simple mental model despite combining two behaviors.",
+      "Safer early-round routing than full value chasing.",
+      "More deadline-aware than baseline alone."
+    ],
+    watchouts: [
+      "The 300-second switch is a hard threshold.",
+      "If the baseline opening was inefficient, the late switch cannot fully recover lost time.",
+      "Behavior depends on two underlying policies, so tuning one changes this policy too."
+    ]
+  },
+  FixedRoute_Capacity2: {
+    label: "Fixed Route Capacity 2",
+    summary: "A scripted branch-order policy that always clears and harvests branches in the same order, regardless of randomized resource placement.",
+    whyUseIt: "Use this when you want a predictable route template for repeated testing or for comparing a simple fixed strategy against adaptive heuristics.",
+    decisionFlow: [
+      "Follow one fixed branch order every run: YELLOW, then BLUE, then GREEN, then RED.",
+      "If a lock is being carried, drop it first so the branch becomes legal for resource collection.",
+      "If the robot is already on a correct color zone, unload matching resources immediately.",
+      "If capacity is full, go score the carried resources before continuing the route.",
+      "Otherwise keep unlocking and collecting resources in the same branch order until everything is delivered, then return home."
+    ],
+    strengths: [
+      "Very easy to understand and repeat.",
+      "Useful for hardware testing because route order is stable across seeds.",
+      "Good baseline for comparing fixed-route behavior against adaptive policies."
+    ],
+    watchouts: [
+      "Ignores the randomized layout when choosing branch order.",
+      "Usually leaves performance on the table compared with value-aware routing.",
+      "The name assumes carry capacity 2 is the intended operating mode, but the simulator will still let users change capacity."
+    ]
+  },
+  Optimal_Omniscient: {
+    label: "Optimal Omniscient",
+    summary: "A benchmark policy that computes a full plan using complete knowledge of the randomized layout.",
+    whyUseIt: "Use this as an upper-bound reference for what the simulator could achieve if the robot knew everything in advance.",
+    decisionFlow: [
+      "At the start of the round, compute the full best action sequence from the current state.",
+      "Cache that sequence and emit actions in order until the plan is exhausted.",
+      "End the round when the precomputed action list is complete."
+    ],
+    strengths: [
+      "Best reference point for comparing heuristic quality.",
+      "Helps quantify how far practical policies are from the planner’s upper bound.",
+      "Useful for validating the simulator and export pipeline."
+    ],
+    watchouts: [
+      "Not realistic for real hardware because it assumes full knowledge.",
+      "Best used for benchmarking, not as a deployable runtime strategy.",
+      "Planner cost may grow with problem complexity."
+    ]
+  }
+};
 
 let graph = createDefaultGraph();
 const baseConfig = createDefaultSimulationConfig(graph);
@@ -56,44 +336,168 @@ app.innerHTML = `
     <canvas id="map" width="900" height="1200"></canvas>
   </section>
   <aside class="panel">
-    <h1>RoboSurvivor 2026</h1>
-    <div class="controls">
-      <label>Policy
-        <select id="policy"></select>
-      </label>
-      <label>Seed
-        <input id="seed" type="number" value="1" min="1" />
-      </label>
-      <label>Carry Capacity
-        <input id="capacity" type="number" value="2" min="1" max="6" />
-      </label>
-      <label>Batch Runs
-        <input id="runs" type="number" value="200" min="10" max="2000" />
-      </label>
-      <label>Playback Speed
-        <input id="speed" type="range" min="0.2" max="2" step="0.05" value="0.35" />
-      </label>
-      <label>Speed Value
-        <input id="speedValue" type="text" value="0.35x" readonly />
-      </label>
-    </div>
-    <div class="row">
-      <button id="runOne">Run Round</button>
-      <button id="randomSeed">Randomize Seed + Run</button>
-      <button id="play">Play Trace</button>
-      <button id="runBatch">Run Batch</button>
-    </div>
-    <div class="row">
-      <button id="exportRoute">Export route_table.json</button>
-      <button id="exportPolicy">Export policy_rules.json</button>
-      <button id="exportFsm">Export fsm_contract.md</button>
-    </div>
-    <div class="stat">Live Game Time<pre id="live"></pre></div>
-    <div class="stat">Round Summary<pre id="summary"></pre></div>
-    <div class="stat">Branch Randomization<pre id="randomization"></pre></div>
-    <div class="stat">Policy Ranking (Batch)<pre id="batch"></pre></div>
+    <header class="hero">
+      <p class="eyebrow">Path Planning Simulator</p>
+      <h1>RoboSurvivor 2026</h1>
+      <p class="hero-copy">Compare policies, inspect the robot trace, and export the firmware-facing tables that are actually useful downstream.</p>
+    </header>
 
-    <div class="stat">Map Editor
+    <section class="section-card" data-section="simulation-controls">
+      <div class="section-heading">
+        <div>
+          <h2>Simulation Controls</h2>
+          <p>Configure the run before simulating.</p>
+        </div>
+        <button class="info-button" type="button" data-info-target="simulation-controls" aria-expanded="false">Info</button>
+      </div>
+      <div class="info-panel hidden" id="info-simulation-controls"></div>
+      <div class="controls">
+        <label>Policy
+          <select id="policy"></select>
+        </label>
+        <label>Seed
+          <input id="seed" type="number" value="1" min="1" />
+        </label>
+        <label>Carry Capacity
+          <input id="capacity" type="number" value="2" min="1" max="6" />
+        </label>
+        <label>Batch Runs
+          <input id="runs" type="number" value="200" min="10" max="2000" />
+        </label>
+        <label>Playback Speed
+          <input id="speed" type="range" min="0.2" max="2" step="0.05" value="0.35" />
+        </label>
+        <label>Speed Value
+          <input id="speedValue" type="text" value="0.35x" readonly />
+        </label>
+      </div>
+    </section>
+
+    <section class="section-card" data-section="round-actions">
+      <div class="section-heading">
+        <div>
+          <h2>Round Actions</h2>
+          <p>Run a single round, animate it, or benchmark every policy.</p>
+        </div>
+        <button class="info-button" type="button" data-info-target="round-actions" aria-expanded="false">Info</button>
+      </div>
+      <div class="info-panel hidden" id="info-round-actions"></div>
+      <div class="row">
+        <button id="runOne">Run Round</button>
+        <button id="randomSeed">Randomize Seed + Run</button>
+        <button id="play">Play Trace</button>
+        <button id="pauseTrace" disabled>Pause Trace</button>
+        <button id="runBatch">Run Batch</button>
+      </div>
+    </section>
+
+    <section class="section-card" data-section="policy-details">
+      <div class="section-heading">
+        <div>
+          <h2>Policy Details</h2>
+          <p>Shows what the selected policy is trying to do and the order of its decision rules.</p>
+        </div>
+        <button class="info-button" type="button" data-info-target="policy-details" aria-expanded="false">Info</button>
+      </div>
+      <div class="info-panel hidden" id="info-policy-details"></div>
+      <div id="policyDetails" class="policy-card"></div>
+    </section>
+
+    <section class="section-card" data-section="artifacts">
+      <div class="section-heading">
+        <div>
+          <h2>Firmware Artifacts</h2>
+          <p>Keep the practical outputs that map directly to firmware behavior.</p>
+        </div>
+        <button class="info-button" type="button" data-info-target="artifacts" aria-expanded="false">Info</button>
+      </div>
+      <div class="info-panel hidden" id="info-artifacts"></div>
+      <div class="artifact-grid">
+        <article class="artifact-card">
+          <h3>route_table.json</h3>
+          <p>Necessary when you want a node-ordered travel plan from the selected run.</p>
+        </article>
+        <article class="artifact-card">
+          <h3>policy_rules.json</h3>
+          <p>Necessary when you want compact runtime guard/action rules for the controller.</p>
+        </article>
+      </div>
+      <div class="row">
+        <button id="exportRoute">Export route_table.json</button>
+        <button id="exportPolicy">Export policy_rules.json</button>
+      </div>
+    </section>
+
+    <section class="section-card" data-section="live-game-time">
+      <div class="section-heading">
+        <div>
+          <h2>Live Game Time</h2>
+          <p>Playback-aware timing and cargo state.</p>
+        </div>
+        <button class="info-button" type="button" data-info-target="live-game-time" aria-expanded="false">Info</button>
+      </div>
+      <div class="info-panel hidden" id="info-live-game-time"></div>
+      <div class="stat"><pre id="live"></pre></div>
+    </section>
+
+    <section class="section-card" data-section="round-summary">
+      <div class="section-heading">
+        <div>
+          <h2>Round Summary</h2>
+          <p>Quick result for the latest deterministic run.</p>
+        </div>
+        <button class="info-button" type="button" data-info-target="round-summary" aria-expanded="false">Info</button>
+      </div>
+      <div class="info-panel hidden" id="info-round-summary"></div>
+      <div class="stat"><pre id="summary"></pre></div>
+    </section>
+
+    <section class="section-card" data-section="branch-randomization">
+      <div class="section-heading">
+        <div>
+          <h2>Branch Randomization</h2>
+          <p>Reveals the seeded resource layout used by the latest run.</p>
+        </div>
+        <button class="info-button" type="button" data-info-target="branch-randomization" aria-expanded="false">Info</button>
+      </div>
+      <div class="info-panel hidden" id="info-branch-randomization"></div>
+      <div class="stat"><pre id="randomization"></pre></div>
+    </section>
+
+    <section class="section-card" data-section="policy-ranking">
+      <div class="section-heading">
+        <div>
+          <h2>Policy Ranking (Batch)</h2>
+          <p>Aggregated comparison across many seeds.</p>
+        </div>
+        <button class="info-button" type="button" data-info-target="policy-ranking" aria-expanded="false">Info</button>
+      </div>
+      <div class="info-panel hidden" id="info-policy-ranking"></div>
+      <div class="stat"><pre id="batch"></pre></div>
+    </section>
+
+    <section class="section-card" data-section="game-strategy">
+      <div class="section-heading">
+        <div>
+          <h2>Game Strategy</h2>
+          <p>The team’s recommended competition direction, shown directly in the app.</p>
+        </div>
+        <button class="info-button" type="button" data-info-target="game-strategy" aria-expanded="false">Info</button>
+      </div>
+      <div class="info-panel hidden" id="info-game-strategy"></div>
+      <div id="gameStrategy" class="strategy-card"></div>
+    </section>
+
+    <section class="section-card" data-section="map-editor">
+      <div class="section-heading">
+        <div>
+          <h2>Map Editor</h2>
+          <p>Edit node geometry and line style directly in the browser.</p>
+        </div>
+        <button class="info-button" type="button" data-info-target="map-editor" aria-expanded="false">Info</button>
+      </div>
+      <div class="info-panel hidden" id="info-map-editor"></div>
+      <div class="stat">Map Editor
       <div class="controls">
         <label>Edit Mode
           <select id="editMode">
@@ -128,7 +532,8 @@ app.innerHTML = `
         <button id="resetMap">Reset Map</button>
       </div>
       <pre id="editHelp">Tip: turn Edit Mode ON and drag nodes directly on canvas to edit lines.</pre>
-    </div>
+      </div>
+    </section>
   </aside>
 </div>
 <div id="batchToast" class="toast hidden">Running batch simulation...</div>
@@ -147,7 +552,10 @@ const speedInput = document.getElementById("speed") as HTMLInputElement;
 const speedValue = document.getElementById("speedValue") as HTMLInputElement;
 const randomSeedBtn = document.getElementById("randomSeed") as HTMLButtonElement;
 const runBatchBtn = document.getElementById("runBatch") as HTMLButtonElement;
+const playBtn = document.getElementById("play") as HTMLButtonElement;
+const pauseTraceBtn = document.getElementById("pauseTrace") as HTMLButtonElement;
 const batchToast = document.getElementById("batchToast") as HTMLDivElement;
+const policyDetailsEl = document.getElementById("policyDetails") as HTMLDivElement;
 
 const summaryEl = document.getElementById("summary") as HTMLPreElement;
 const batchEl = document.getElementById("batch") as HTMLPreElement;
@@ -175,6 +583,14 @@ let robotPose: RobotPose = { ...nodePoint(graph.startNodeId), heading: -Math.PI 
 let visualState: VisualState = emptyVisualState();
 let animationHandle = 0;
 let draggedNodeId: string | null = null;
+let activeAnimation: {
+  startTs: number;
+  pausedAtMs: number;
+  durationMs: number;
+  poses: Array<RobotPose & { stepIdx: number; stepProgress: number }>;
+  result: SimulationResult;
+  isPaused: boolean;
+} | null = null;
 
 function emptyVisualState(): VisualState {
   return {
@@ -189,6 +605,91 @@ function emptyVisualState(): VisualState {
 
 function getPolicyByName(name: string): StrategyPolicy {
   return ALL_POLICIES.find((p) => p.name === name) ?? AdaptiveSafePolicy;
+}
+
+function renderInfoPanel(sectionKey: string): string {
+  const info = SECTION_INFO[sectionKey];
+  if (!info) return "";
+  return [
+    `<p class="info-title">${info.title}</p>`,
+    ...info.body.map((line) => `<p>${line}</p>`)
+  ].join("");
+}
+
+function syncInfoPanels(): void {
+  document.querySelectorAll<HTMLButtonElement>(".info-button").forEach((button) => {
+    const key = button.dataset.infoTarget;
+    if (!key) return;
+    const panel = document.getElementById(`info-${key}`);
+    if (!panel) return;
+    panel.innerHTML = renderInfoPanel(key);
+    button.onclick = () => {
+      const isOpen = !panel.classList.contains("hidden");
+      panel.classList.toggle("hidden", isOpen);
+      button.setAttribute("aria-expanded", String(!isOpen));
+      button.textContent = isOpen ? "Info" : "Hide";
+    };
+  });
+}
+
+function renderPolicyDetails(name: string): void {
+  const info = POLICY_INFO[name] ?? POLICY_INFO[AdaptiveSafePolicy.name];
+  policyDetailsEl.innerHTML = `
+    <div class="policy-header">
+      <div>
+        <p class="policy-kicker">${info.label}</p>
+        <h3>${name}</h3>
+      </div>
+      <p class="policy-summary">${info.summary}</p>
+    </div>
+    <p class="policy-why">${info.whyUseIt}</p>
+    <div class="policy-columns">
+      <div>
+        <h4>Decision Flow</h4>
+        <ol>
+          ${info.decisionFlow.map((item) => `<li>${item}</li>`).join("")}
+        </ol>
+      </div>
+      <div>
+        <h4>Strengths</h4>
+        <ul>
+          ${info.strengths.map((item) => `<li>${item}</li>`).join("")}
+        </ul>
+        <h4>Watchouts</h4>
+        <ul>
+          ${info.watchouts.map((item) => `<li>${item}</li>`).join("")}
+        </ul>
+      </div>
+    </div>
+  `;
+}
+
+function renderGameStrategy(): void {
+  const strategyEl = document.getElementById("gameStrategy") as HTMLDivElement | null;
+  if (!strategyEl) return;
+  strategyEl.innerHTML = GAME_STRATEGY.map(
+    (section) => `
+      <article class="strategy-block">
+        <h3>${section.title}</h3>
+        <p class="strategy-summary">${section.summary}</p>
+        <ul>
+          ${section.bullets.map((item) => `<li>${item}</li>`).join("")}
+        </ul>
+      </article>
+    `
+  ).join("");
+}
+
+function stopTracePlayback(resetState = false): void {
+  if (animationHandle) {
+    cancelAnimationFrame(animationHandle);
+    animationHandle = 0;
+  }
+  if (resetState) {
+    activeAnimation = null;
+    pauseTraceBtn.disabled = true;
+    pauseTraceBtn.textContent = "Pause Trace";
+  }
 }
 
 function cloneGraphForSimulation(g: Graph): Graph {
@@ -664,7 +1165,7 @@ function deriveVisualState(result: SimulationResult, stepIdx: number, progressIn
 }
 
 function runRound(): void {
-  if (animationHandle) cancelAnimationFrame(animationHandle);
+  stopTracePlayback(true);
   const config = configFromInputs();
   const policy = getPolicyByName(policySelect.value);
   const seed = Math.max(1, Number(seedInput.value) || 1);
@@ -728,23 +1229,21 @@ function traceToPoses(trace: TraceStep[]): Array<RobotPose & { stepIdx: number; 
   return poses;
 }
 
-function playTrace(result: SimulationResult): void {
-  if (animationHandle) cancelAnimationFrame(animationHandle);
-  const poses = traceToPoses(result.trace);
-  const simTotal = result.trace.reduce((acc, step) => acc + step.segment_time_s, 0);
-  const speed = Number(speedInput.value) || 0.35;
-  const msPerSimSecond = 420;
-  const durationMs = Math.max(10000, (simTotal * msPerSimSecond) / speed);
-
-  let start = 0;
+function scheduleActiveAnimationFrame(): void {
+  if (!activeAnimation) return;
   const frame = (ts: number) => {
-    if (!start) start = ts;
-    const t = Math.min(1, (ts - start) / durationMs);
-    const idx = t * (poses.length - 1);
+    if (!activeAnimation) return;
+    if (activeAnimation.isPaused) return;
+    if (!activeAnimation.startTs) {
+      activeAnimation.startTs = ts - activeAnimation.pausedAtMs;
+    }
+    const elapsedMs = ts - activeAnimation.startTs;
+    const t = Math.min(1, elapsedMs / activeAnimation.durationMs);
+    const idx = t * (activeAnimation.poses.length - 1);
     const i = Math.floor(idx);
-    const j = Math.min(i + 1, poses.length - 1);
-    const a = poses[i];
-    const b = poses[j];
+    const j = Math.min(i + 1, activeAnimation.poses.length - 1);
+    const a = activeAnimation.poses[i];
+    const b = activeAnimation.poses[j];
     const lt = idx - i;
 
     robotPose = {
@@ -753,20 +1252,61 @@ function playTrace(result: SimulationResult): void {
       heading: a.heading + (b.heading - a.heading) * lt
     };
 
-    visualState = deriveVisualState(result, a.stepIdx, a.stepProgress);
+    visualState = deriveVisualState(activeAnimation.result, a.stepIdx, a.stepProgress);
     updateLivePanel(baseConfig.timeout_s);
     drawMap();
 
     if (t < 1) {
       animationHandle = requestAnimationFrame(frame);
     } else {
-      visualState = deriveVisualState(result, result.trace.length - 1, 1);
+      visualState = deriveVisualState(activeAnimation.result, activeAnimation.result.trace.length - 1, 1);
       updateLivePanel(baseConfig.timeout_s);
       drawMap();
+      stopTracePlayback(true);
     }
   };
 
   animationHandle = requestAnimationFrame(frame);
+}
+
+function playTrace(result: SimulationResult): void {
+  stopTracePlayback(false);
+  const poses = traceToPoses(result.trace);
+  const simTotal = result.trace.reduce((acc, step) => acc + step.segment_time_s, 0);
+  const speed = Number(speedInput.value) || 0.35;
+  const msPerSimSecond = 420;
+  const durationMs = Math.max(10000, (simTotal * msPerSimSecond) / speed);
+
+  activeAnimation = {
+    startTs: 0,
+    pausedAtMs: 0,
+    durationMs,
+    poses,
+    result,
+    isPaused: false
+  };
+  pauseTraceBtn.disabled = false;
+  pauseTraceBtn.textContent = "Pause Trace";
+  scheduleActiveAnimationFrame();
+}
+
+function toggleTracePause(): void {
+  if (!activeAnimation) return;
+  if (activeAnimation.isPaused) {
+    activeAnimation.isPaused = false;
+    activeAnimation.startTs = 0;
+    pauseTraceBtn.textContent = "Pause Trace";
+    scheduleActiveAnimationFrame();
+    return;
+  }
+
+  activeAnimation.isPaused = true;
+  activeAnimation.pausedAtMs = activeAnimation.startTs ? performance.now() - activeAnimation.startTs : 0;
+  pauseTraceBtn.textContent = "Resume Trace";
+  if (animationHandle) {
+    cancelAnimationFrame(animationHandle);
+    animationHandle = 0;
+  }
 }
 
 function showBatchToast(show: boolean): void {
@@ -869,6 +1409,10 @@ speedInput.oninput = () => {
   speedValue.value = `${Number(speedInput.value).toFixed(2)}x`;
 };
 
+policySelect.onchange = () => {
+  renderPolicyDetails(policySelect.value);
+};
+
 randomSeedBtn.onclick = () => {
   const seed = Math.floor(Math.random() * 1_000_000) + 1;
   seedInput.value = String(seed);
@@ -944,9 +1488,12 @@ window.addEventListener("mouseup", () => {
 });
 
 (document.getElementById("runOne") as HTMLButtonElement).onclick = () => runRound();
-(document.getElementById("play") as HTMLButtonElement).onclick = () => {
+playBtn.onclick = () => {
   if (!latestResult) runRound();
   if (latestResult) playTrace(latestResult);
+};
+pauseTraceBtn.onclick = () => {
+  toggleTracePause();
 };
 runBatchBtn.onclick = () => {
   void runBatch();
@@ -966,12 +1513,13 @@ runBatchBtn.onclick = () => {
   download("policy_rules.json", JSON.stringify(fw.policy_rules, null, 2));
 };
 
-(document.getElementById("exportFsm") as HTMLButtonElement).onclick = () => {
-  download("fsm_contract.md", generateFsmContractMarkdown());
-};
-
 refreshMapEditorControls();
+syncInfoPanels();
+renderPolicyDetails(policySelect.value);
+renderGameStrategy();
 drawMap();
 // runRound();  // Don't run on load - wait for user to click
 summarizeBatch([]);
 updateLivePanel(baseConfig.timeout_s);
+summaryEl.textContent = "Run a round to see the latest score, legality, and trace depth.";
+randomizationEl.textContent = "Run a round to reveal the seeded branch layout used by the simulator.";

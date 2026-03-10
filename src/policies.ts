@@ -3,6 +3,7 @@ import { computeOptimalPolicy } from "./planner";
 import { GraphRouter } from "./router";
 
 const BRANCHES: BranchId[] = ["RED", "YELLOW", "BLUE", "GREEN"];
+const FIXED_BRANCH_ORDER: BranchId[] = ["YELLOW", "BLUE", "GREEN", "RED"];
 
 function nearestBlackZone(router: GraphRouter, fromNode: string, blackZones: string[]): string {
   let nearest = blackZones[0];
@@ -197,6 +198,30 @@ function maybeReturnOrEnd(state: RoundState, config: SimulationConfig): Action {
   return { type: "END_ROUND" };
 }
 
+function firstLockedBranchInOrder(state: RoundState, order: BranchId[]): BranchId | null {
+  for (const branchId of order) {
+    if (!state.locks_cleared[branchId]) {
+      return branchId;
+    }
+  }
+  return null;
+}
+
+function nextPickInFixedOrder(state: RoundState, config: SimulationConfig, order: BranchId[]): Action | null {
+  for (const branchId of order) {
+    if (!state.locks_cleared[branchId]) continue;
+    const pending = pendingSlotsForBranch(state, config, branchId);
+    for (const slotNodeId of pending) {
+      const [slot1, slot2] = config.map.branches[branchId].resource_slot_nodes;
+      if (slotNodeId === slot2 && !state.picked_slots[slot1]) {
+        continue;
+      }
+      return { type: "PICK_RESOURCE", slotNodeId, branchId };
+    }
+  }
+  return null;
+}
+
 let optimalPathCache: Action[] | null = null;
 let currentPlanIndex = 0;
 
@@ -356,10 +381,59 @@ export const AdaptiveSafePolicy: StrategyPolicy = {
   }
 };
 
+export const FixedRouteCapacity2Policy: StrategyPolicy = {
+  name: "FixedRoute_Capacity2",
+  nextAction(state, observation, config) {
+    const router = new GraphRouter(config.map, config.robot);
+    const held = heldLocks(state);
+
+    if (held.length > 0) {
+      return { type: "DROP_LOCK", branchId: held[0] };
+    }
+
+    const immediateDrop = dropColorAtCurrentZone(state, config);
+    if (immediateDrop) {
+      return immediateDrop;
+    }
+
+    const nextLockedBranch = firstLockedBranchInOrder(state, FIXED_BRANCH_ORDER);
+    if (nextLockedBranch) {
+      if (state.inventory.length >= config.robot.carry_capacity) {
+        return chooseDropColor(state, config, router, "nearest");
+      }
+      return { type: "PICK_LOCK", branchId: nextLockedBranch };
+    }
+
+    if (state.inventory.length >= config.robot.carry_capacity) {
+      return chooseDropColor(state, config, router, "nearest");
+    }
+
+    const nextPick = nextPickInFixedOrder(state, config, FIXED_BRANCH_ORDER);
+    if (nextPick) {
+      return nextPick;
+    }
+
+    if (state.inventory.length > 0) {
+      return chooseDropColor(state, config, router, "nearest");
+    }
+
+    if (state.placed_resources.length === 8) {
+      return maybeReturnOrEnd(state, config);
+    }
+
+    if (observation.remaining_time_s < 10) {
+      return { type: "END_ROUND" };
+    }
+
+    return maybeReturnOrEnd(state, config);
+  }
+};
+
 export const ALL_POLICIES: StrategyPolicy[] = [
   BaselineSingleCarryPolicy,
   BusRouteParametricPolicy,
   ValueAwareDeadlinePolicy,
   AdaptiveSafePolicy,
+  FixedRouteCapacity2Policy,
   OptimalOmniscientPolicy
 ];

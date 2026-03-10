@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BaselineSingleCarryPolicy, BusRouteParametricPolicy, ValueAwareDeadlinePolicy, OptimalOmniscientPolicy } from "../src/policies";
+import { BaselineSingleCarryPolicy, BusRouteParametricPolicy, FixedRouteCapacity2Policy, ValueAwareDeadlinePolicy, OptimalOmniscientPolicy } from "../src/policies";
 import { createDefaultGraph } from "../src/map";
 import { estimateFirmwarePlan } from "../src/firmware";
 import { GraphRouter } from "../src/router";
@@ -215,6 +215,19 @@ describe("timing and scoring", () => {
 });
 
 describe("policy comparisons", () => {
+  it("fixed route policy unlocks branches in the same order across different seeds", () => {
+    const run1 = simulateRound(config(), FixedRouteCapacity2Policy, 1);
+    const run2 = simulateRound(config(), FixedRouteCapacity2Policy, 57);
+
+    const unlockOrder = (result: ReturnType<typeof simulateRound>) =>
+      result.trace
+        .filter((step) => step.note === "lock_gripped")
+        .map((step) => step.action.branchId);
+
+    expect(unlockOrder(run1)).toEqual(["YELLOW", "BLUE", "GREEN", "RED"]);
+    expect(unlockOrder(run2)).toEqual(["YELLOW", "BLUE", "GREEN", "RED"]);
+  });
+
   it("higher carry capacity should not increase mean time for bus policy", { timeout: 15000 }, () => {
     const cap1 = config();
     cap1.robot.carry_capacity = 1;
