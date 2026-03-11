@@ -1,15 +1,12 @@
-import { computeOptimalPolicy } from "./planner";
+import { computeOptimalPolicy, computeOptimalPolicyLiFo } from "./planner";
 import { createDefaultGraph } from "./map";
 import { GraphRouter } from "./router";
 import { createDefaultSimulationConfig } from "./simulator";
-import type {
-  Action,
-  BranchId,
-  Graph,
-  ResourceColor,
-  RoundState,
-  SimulationConfig
-} from "./types";
+import type { Action, BranchId, Graph, ResourceColor, RoundState, SimulationConfig } from "./types";
+import { enumerateLegalLayouts, type EnumeratedLayout } from "./layouts";
+
+export { enumerateLegalLayouts, getLayoutById, findLayoutIdForRandomization, randomizationFromLayoutId } from "./layouts";
+export type { EnumeratedLayout } from "./layouts";
 
 const BRANCHES: BranchId[] = ["RED", "YELLOW", "BLUE", "GREEN"];
 const COLORS: Exclude<ResourceColor, "BLACK">[] = ["RED", "YELLOW", "BLUE", "GREEN"];
@@ -38,11 +35,6 @@ export const IMPORTANT_NODES = [
   "R_GREEN_2"
 ] as const;
 
-export interface EnumeratedLayout {
-  id: number;
-  slots: Record<BranchId, [Exclude<ResourceColor, "BLACK">, Exclude<ResourceColor, "BLACK">]>;
-}
-
 export interface GeneratedPlanAction {
   type: string;
   arg0: number;
@@ -54,40 +46,13 @@ export interface GeneratedPlanDesc {
   actions: GeneratedPlanAction[];
 }
 
+export type GeneratedPlanMode = "normal" | "lifo";
+
 export interface GeneratedRouteEntry {
   valid: number;
   step_count: number;
   steps: string[];
   path: string[];
-}
-
-function permute<T>(items: readonly T[]): T[][] {
-  if (items.length === 0) return [[]];
-  const out: T[][] = [];
-  items.forEach((item, index) => {
-    const rest = [...items.slice(0, index), ...items.slice(index + 1)];
-    for (const tail of permute(rest)) {
-      out.push([item, ...tail]);
-    }
-  });
-  return out;
-}
-
-export function enumerateLegalLayouts(): EnumeratedLayout[] {
-  const rowPermutations = permute(COLORS);
-  const layouts: EnumeratedLayout[] = [];
-  let id = 0;
-  for (const row1 of rowPermutations) {
-    for (const row2 of rowPermutations) {
-      const slots = {} as EnumeratedLayout["slots"];
-      BRANCHES.forEach((branchId, index) => {
-        slots[branchId] = [row1[index], row2[index]];
-      });
-      layouts.push({ id, slots });
-      id += 1;
-    }
-  }
-  return layouts;
 }
 
 function createInitialStateForLayout(config: SimulationConfig, layout: EnumeratedLayout): RoundState {
@@ -152,10 +117,12 @@ export function createDefaultPlanningConfig(): SimulationConfig {
   return createDefaultSimulationConfig(createDefaultGraph());
 }
 
-export function buildPlanForLayout(config: SimulationConfig, layout: EnumeratedLayout): GeneratedPlanDesc {
+export function buildPlanForLayout(config: SimulationConfig, layout: EnumeratedLayout, mode: GeneratedPlanMode = "normal"): GeneratedPlanDesc {
   const router = new GraphRouter(config.map, config.robot);
   const state = createInitialStateForLayout(config, layout);
-  const actions = computeOptimalPolicy(config, state, router);
+  const actions = mode === "lifo"
+    ? computeOptimalPolicyLiFo(config, state, router)
+    : computeOptimalPolicy(config, state, router);
   if (actions.length > MAX_PLAN_ACTIONS) {
     throw new Error(`Plan for layout ${layout.id} exceeds MAX_PLAN_ACTIONS=${MAX_PLAN_ACTIONS}`);
   }

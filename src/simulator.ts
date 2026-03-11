@@ -10,8 +10,9 @@ import type {
   StrategyPolicy,
   TraceStep
 } from "./types";
-import { randomizeRound } from "./randomization";
+import { layoutIdForSeed, randomizeRound } from "./randomization";
 import { GraphRouter } from "./router";
+import { getLayoutById } from "./layouts";
 
 const BRANCHES: BranchId[] = ["RED", "YELLOW", "BLUE", "GREEN"];
 
@@ -36,11 +37,13 @@ function syncLegacyHoldingLock(state: RoundState): void {
   state.holding_lock_for_branch = state.holding_locks_for_branches[0] ?? null;
 }
 
-function createInitialState(config: SimulationConfig, seed: number): RoundState {
-  const randomization = randomizeRound(seed);
+function createInitialStateFromResources(
+  config: SimulationConfig,
+  branch_to_resources: RoundState["branch_to_resources"]
+): RoundState {
   return {
     current_node: config.map.startNodeId,
-    branch_to_resources: randomization.branch_to_resources,
+    branch_to_resources,
     locks_cleared: { RED: false, YELLOW: false, BLUE: false, GREEN: false },
     picked_slots: {},
     inventory: [],
@@ -55,6 +58,10 @@ function createInitialState(config: SimulationConfig, seed: number): RoundState 
     completed: false,
     returned_to_start: false
   };
+}
+
+function createInitialState(config: SimulationConfig, seed: number): RoundState {
+  return createInitialStateFromResources(config, randomizeRound(seed).branch_to_resources);
 }
 
 function observationOf(state: RoundState, timeout: number): Observation {
@@ -164,13 +171,14 @@ function inventoryDropIndex(
   return state.inventory.findIndex((item) => item.color === color);
 }
 
-export function simulateRound(
+function simulateRoundFromState(
   config: SimulationConfig,
   policy: StrategyPolicy,
-  seed: number,
+  state: RoundState,
+  seed: number | null,
+  layout_id: number,
   overrides?: Partial<PolicyOverrides>
 ): SimulationResult {
-  const state = createInitialState(config, seed);
   const router = new GraphRouter(config.map, config.robot);
   const trace: TraceStep[] = [];
   const legality_violations: string[] = [];
@@ -355,11 +363,33 @@ export function simulateRound(
 
   return {
     seed,
+    layout_id,
     state,
     trace,
     legality_violations,
     policy_name: policy.name
   };
+}
+
+export function simulateRound(
+  config: SimulationConfig,
+  policy: StrategyPolicy,
+  seed: number,
+  overrides?: Partial<PolicyOverrides>
+): SimulationResult {
+  const state = createInitialState(config, seed);
+  return simulateRoundFromState(config, policy, state, seed, layoutIdForSeed(seed), overrides);
+}
+
+export function simulateRoundForLayout(
+  config: SimulationConfig,
+  policy: StrategyPolicy,
+  layoutId: number,
+  overrides?: Partial<PolicyOverrides>
+): SimulationResult {
+  const layout = getLayoutById(layoutId);
+  const state = createInitialStateFromResources(config, layout.slots);
+  return simulateRoundFromState(config, policy, state, null, layoutId, overrides);
 }
 
 export function createDefaultSimulationConfig(map: Graph): SimulationConfig {

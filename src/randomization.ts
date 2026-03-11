@@ -1,5 +1,6 @@
 import seedrandom from "seedrandom";
 import type { BranchId, ResourceColor, RoundRandomization } from "./types";
+import { findLayoutIdForRandomization } from "./layouts";
 
 const BRANCHES: BranchId[] = ["RED", "YELLOW", "BLUE", "GREEN"];
 const COLORS: ResourceColor[] = ["RED", "YELLOW", "BLUE", "GREEN"];
@@ -24,4 +25,12 @@ export function randomizeRound(seed: number): RoundRandomization {
   });
 
   return { branch_to_resources };
+}
+
+export function layoutIdForSeed(seed: number): number {
+  const layoutId = findLayoutIdForRandomization(randomizeRound(seed).branch_to_resources);
+  if (layoutId === null) {
+    throw new Error(`Seed ${seed} did not resolve to a legal layout`);
+  }
+  return layoutId;
 }

@@ -8,13 +8,18 @@ import {
   createDefaultGraph,
   createDefaultSimulationConfig,
   estimateFirmwarePlan,
+  getLayoutById,
+  layoutIdForSeed,
   policySupportsFixedRouteExperiment,
   policySupportsOverrides,
   simulateBatch,
+  simulateBatchOverLayouts,
   simulateRound,
+  simulateRoundForLayout,
   withPolicyOverrides
 } from "./index";
 import type {
+  BatchSourceMode,
   BlackLockCarryMode,
   BatchResult,
   BranchOrderMode,
@@ -80,9 +85,11 @@ const SECTION_INFO: Record<string, SectionInfo> = {
     title: "Simulation Controls",
     body: [
       "Policy chooses the decision function that decides every next action during the round. Changing it swaps the full decision logic, not just a label.",
-      "Seed fixes the branch randomization. Using the same seed gives the same color placement, which makes comparisons between policies fair and repeatable.",
+      "Layout ID selects one exact legal 4x2 field arrangement from the shared 576-layout system used by the translator and STM32 tables.",
+      "Seed is kept as an advanced helper for reproducibility. It resolves to a layout ID, but normal single-run simulation now uses layout ID as the main control.",
       "Carry Capacity limits how many total items the robot can hold at once. Locks and colored resources both consume capacity.",
-      "Batch Runs controls how many seeded simulations are used during ranking. Higher values make comparisons more stable but also slower.",
+      "Batch Source chooses between seed sampling and an exact sweep over all 576 legal layouts. Exact sweeps are stronger benchmarks but much heavier to run.",
+      "Batch Runs only applies to seed sampling. Exact layout sweep ignores it because it always runs all 576 layouts.",
       "Playback Speed affects only the trace animation in the browser. It does not change simulated robot time or batch statistics."
     ]
   },
@@ -98,10 +105,11 @@ const SECTION_INFO: Record<string, SectionInfo> = {
     title: "Round Actions",
     body: [
       "Run Round executes one deterministic simulation using the selected policy, seed, and carry capacity. It refreshes the summary, map state, and trace data.",
-      "Randomize Seed + Run picks a new seed and immediately simulates one round so you can inspect a fresh branch layout without manually entering values.",
+      "Run Round executes one deterministic simulation using the selected policy, chosen layout ID, and carry capacity. It refreshes the summary, map state, and trace data.",
+      "Randomize Seed + Run picks a new seed, resolves the matching legal layout ID, and runs that seeded case so you can reproduce it later.",
       "Play Trace animates the latest simulated trace on the map. If there is no latest result yet, the app first runs a round.",
       "Pause Trace freezes the animation at the current playback position. Pressing it again resumes from the same point instead of restarting the trace.",
-      "Run Batch evaluates every available policy across many seeds, then ranks them by performance so you can compare robustness instead of one lucky run."
+      "Run Batch evaluates every available policy using the selected batch source, then ranks them so you can compare either broad seed robustness or exact all-layout coverage."
     ]
   },
   "policy-details": {
@@ -134,7 +142,7 @@ const SECTION_INFO: Record<string, SectionInfo> = {
     title: "Round Summary",
     body: [
       "This is the concise end-of-round report for the most recent run.",
-      "Score is the points achieved by the policy under the current seed. Placed shows how many of the eight colored resources were delivered.",
+      "Score is the points achieved by the policy under the current layout. Placed shows how many of the eight colored resources were delivered.",
       "Returned indicates whether the robot made it back to START before the round ended. Violations reports legality or execution rule issues detected by the simulator.",
       "Trace steps shows how many timed segments the round generated, which also determines how detailed playback will be."
     ]
@@ -142,15 +150,15 @@ const SECTION_INFO: Record<string, SectionInfo> = {
   "branch-randomization": {
     title: "Branch Randomization",
     body: [
-      "Each branch contains two hidden colored resources. This panel reveals the seeded randomization used by the latest run.",
-      "Keeping the seed fixed is the correct way to compare policy behavior because it prevents the branch layout from changing between runs.",
-      "If a policy looks better on one seed, use batch mode to check whether that advantage holds over many layouts."
+      "Each branch contains two hidden colored resources. This panel reveals the exact legal layout used by the latest run.",
+      "Layout ID is the cleanest way to compare one exact case. Seed is still shown when the run came from seeded sampling.",
+      "If a policy looks better on one layout, use exact layout sweep or seed sampling batch mode to see whether the advantage holds broadly."
     ]
   },
   "policy-ranking": {
     title: "Policy Ranking",
     body: [
-      "Batch ranking runs all policies over the same set of seeds and compares their aggregated results.",
+      "Batch ranking runs all policies over the same source set and compares their aggregated results.",
       "Mean score is the primary success indicator. Completion shows how often a policy finished all required deliveries.",
       "Mean, p50, and p90 time show typical and slower-case completion behavior. Violations count tells you whether a policy tends to drift into illegal or unrecoverable situations."
     ]
@@ -383,8 +391,17 @@ app.innerHTML = `
         <label>Policy
           <select id="policy"></select>
         </label>
-        <label>Seed
+        <label>Layout ID
+          <input id="layoutId" type="number" value="0" min="0" max="575" />
+        </label>
+        <label>Advanced Seed
           <input id="seed" type="number" value="1" min="1" />
+        </label>
+        <label>Batch Source
+          <select id="batchSource">
+            <option value="seed_sampling">Seed sampling</option>
+            <option value="exact_layout_sweep">Exact layout sweep (576 layouts)</option>
+          </select>
         </label>
         <label>Carry Capacity
           <input id="capacity" type="number" value="2" min="1" max="6" />
@@ -633,7 +650,9 @@ const lockClearStrategyControl = document.getElementById("lockClearStrategyContr
 const lockClearStrategySelect = document.getElementById("lockClearStrategy") as HTMLSelectElement;
 const strategyKnobsCard = document.getElementById("strategyKnobsCard") as HTMLElement;
 const strategyKnobsMessage = document.getElementById("strategyKnobsMessage") as HTMLParagraphElement;
+const layoutIdInput = document.getElementById("layoutId") as HTMLInputElement;
 const seedInput = document.getElementById("seed") as HTMLInputElement;
+const batchSourceSelect = document.getElementById("batchSource") as HTMLSelectElement;
 const capacityInput = document.getElementById("capacity") as HTMLInputElement;
 const runsInput = document.getElementById("runs") as HTMLInputElement;
 const speedInput = document.getElementById("speed") as HTMLInputElement;
@@ -699,6 +718,24 @@ function emptyVisualState(): VisualState {
 
 function getPolicyByName(name: string): StrategyPolicy {
   return ALL_POLICIES.find((p) => p.name === name) ?? AdaptiveSafePolicy;
+}
+
+function clampLayoutId(value: number): number {
+  return Math.max(0, Math.min(575, Number.isFinite(value) ? Math.floor(value) : 0));
+}
+
+function syncLayoutIdFromSeed(): void {
+  const seed = Math.max(1, Number(seedInput.value) || 1);
+  const layoutId = layoutIdForSeed(seed);
+  layoutIdInput.value = String(layoutId);
+}
+
+function syncBatchControls(): void {
+  const exact = batchSourceSelect.value === "exact_layout_sweep";
+  runsInput.disabled = exact;
+  if (exact) {
+    runsInput.value = "576";
+  }
 }
 
 function renderInfoPanel(sectionKey: string): string {
@@ -1203,7 +1240,8 @@ function summarizeResult(result: SimulationResult): void {
   const s = result.state;
   const lines = [
     `policy=${result.policy_name}`,
-    `seed=${result.seed}`,
+    `layout_id=${result.layout_id}`,
+    `seed=${result.seed ?? "n/a(layout-driven)"}`,
     `resource_drop_order=${currentPolicyOverrides().resource_drop_order}`,
     `score=${s.score}`,
     `time=${s.time_elapsed_s.toFixed(2)}s`,
@@ -1235,7 +1273,10 @@ function summarizeResult(result: SimulationResult): void {
   randomizationEl.textContent = Object.entries(s.branch_to_resources)
     .map(([branch, colors]) => `${branch}: ${colors.join(", ")}`)
     .join("\n");
-  randomizationEl.textContent += `\nseed=${result.seed} (same seed => same placement)`;
+  randomizationEl.textContent += `\nlayout_id=${result.layout_id}`;
+  randomizationEl.textContent += result.seed === null
+    ? `\nseed=n/a (direct layout run)`
+    : `\nseed=${result.seed} (this seed resolved to layout_id=${result.layout_id})`;
 }
 
 function updateLivePanel(timeoutS: number): void {
@@ -1257,7 +1298,7 @@ function summarizeBatch(items: BatchResult[]): void {
     .sort((a, b) => b.mean_score - a.mean_score)
     .map(
       (r, i) =>
-        `${i + 1}. ${r.policy_name}\n  mean_score=${r.mean_score}\n  completion=${r.completion_rate}%\n  mean_time=${r.mean_time_s}s p50=${r.p50_time_s}s p90=${r.p90_time_s}s\n  violations=${r.violations_count}`
+        `${i + 1}. ${r.policy_name}\n  source=${r.batch_source}\n  runs=${r.runs}\n  mean_score=${r.mean_score}\n  completion=${r.completion_rate}%\n  mean_time=${r.mean_time_s}s p50=${r.p50_time_s}s p90=${r.p90_time_s}s\n  violations=${r.violations_count}`
     )
     .join("\n\n");
 }
@@ -1359,8 +1400,9 @@ function runRound(): void {
   const config = configFromInputs();
   const policy = selectedExecutionPolicy();
   const overrides = currentPolicyOverrides();
-  const seed = Math.max(1, Number(seedInput.value) || 1);
-  const result = simulateRound(config, policy, seed, overrides);
+  const layoutId = clampLayoutId(Number(layoutIdInput.value));
+  layoutIdInput.value = String(layoutId);
+  const result = simulateRoundForLayout(config, policy, layoutId, overrides);
   latestResult = result;
   const finalPt = mmToCanvas(
     result.state.current_node ? config.map.nodes[result.state.current_node].x_mm : graph.nodes[graph.startNodeId].x_mm,
@@ -1513,10 +1555,14 @@ async function runBatch(): Promise<void> {
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
   const config = configFromInputs();
-  const runs = Math.max(10, Number(runsInput.value) || 100);
   try {
     const overrides = currentPolicyOverrides();
-    latestBatch = ALL_POLICIES.map((p) => simulateBatch(config, withPolicyOverrides(p, overrides), runs, overrides));
+    if (batchSourceSelect.value === "exact_layout_sweep") {
+      latestBatch = ALL_POLICIES.map((p) => simulateBatchOverLayouts(config, withPolicyOverrides(p, overrides), overrides));
+    } else {
+      const runs = Math.max(10, Number(runsInput.value) || 100);
+      latestBatch = ALL_POLICIES.map((p) => simulateBatch(config, withPolicyOverrides(p, overrides), runs, overrides));
+    }
     summarizeBatch(latestBatch);
   } finally {
     showBatchToast(false);
@@ -1632,10 +1678,47 @@ lockClearStrategySelect.onchange = () => {
   renderPolicyDetails(policySelect.value);
 };
 
+layoutIdInput.onchange = () => {
+  layoutIdInput.value = String(clampLayoutId(Number(layoutIdInput.value)));
+};
+
+seedInput.onchange = () => {
+  syncLayoutIdFromSeed();
+};
+
+batchSourceSelect.onchange = () => {
+  syncBatchControls();
+};
+
 randomSeedBtn.onclick = () => {
   const seed = Math.floor(Math.random() * 1_000_000) + 1;
   seedInput.value = String(seed);
-  runRound();
+  const config = configFromInputs();
+  const policy = selectedExecutionPolicy();
+  const overrides = currentPolicyOverrides();
+  const result = simulateRound(config, policy, seed, overrides);
+  layoutIdInput.value = String(result.layout_id);
+  latestResult = result;
+  const finalPt = mmToCanvas(
+    result.state.current_node ? config.map.nodes[result.state.current_node].x_mm : graph.nodes[graph.startNodeId].x_mm,
+    result.state.current_node ? config.map.nodes[result.state.current_node].y_mm : graph.nodes[graph.startNodeId].y_mm
+  );
+  robotPose = { ...finalPt, heading: robotPose.heading };
+  visualState = {
+    inventory: result.state.inventory.map((item) => ({ color: item.color, sourceBranch: item.sourceBranch })),
+    holdingLockCount: result.state.holding_locks_for_branches?.length ?? (result.state.holding_lock_for_branch ? 1 : 0),
+    locksPlaced: result.state.placed_locks.map((lock) => ({ ...lock })),
+    zonePlaced: { RED: 0, YELLOW: 0, BLUE: 0, GREEN: 0 },
+    pickedSlots: { ...result.state.picked_slots },
+    elapsed_s: result.state.time_elapsed_s
+  };
+  for (const placed of result.state.placed_resources) {
+    visualState.zonePlaced[placed.color]++;
+  }
+  updateLivePanel(config.timeout_s);
+  drawMap();
+  renderPolicyDetails(policySelect.value);
+  summarizeResult(result);
 };
 
 nodeSelect.onchange = () => {
@@ -1741,6 +1824,8 @@ drawMap();
 // runRound();  // Don't run on load - wait for user to click
 summarizeBatch([]);
 updateLivePanel(baseConfig.timeout_s);
-summaryEl.textContent = "Run a round to see the latest score, legality, and trace depth.";
-randomizationEl.textContent = "Run a round to reveal the seeded branch layout used by the simulator.";
+summaryEl.textContent = "Run a round to see the latest layout_id, score, legality, and trace depth.";
+randomizationEl.textContent = "Run a round to reveal the exact legal layout used by the simulator.";
+syncLayoutIdFromSeed();
+syncBatchControls();
 }

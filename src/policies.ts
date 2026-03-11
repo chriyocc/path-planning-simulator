@@ -7,7 +7,7 @@ import type {
   SimulationConfig,
   StrategyPolicy
 } from "./types";
-import { computeOptimalPolicy } from "./planner";
+import { computeOptimalPolicy, computeOptimalPolicyLiFo } from "./planner";
 import { GraphRouter } from "./router";
 
 const BRANCHES: BranchId[] = ["RED", "YELLOW", "BLUE", "GREEN"];
@@ -685,6 +685,26 @@ function adaptiveActionWithOverrides(
   return valueAwareActionWithOverrides(state, observation, config, overrides);
 }
 
+function optimalActionWithOverrides(
+  state: RoundState,
+  _observation: Parameters<StrategyPolicy["nextAction"]>[1],
+  config: SimulationConfig,
+  overrides: PolicyOverrides
+): Action {
+  if (state.time_elapsed_s === 0 || optimalPathCache === null) {
+    const router = new GraphRouter(config.map, config.robot);
+    optimalPathCache = overrides.resource_drop_order === "lifo"
+      ? computeOptimalPolicyLiFo(config, state, router)
+      : computeOptimalPolicy(config, state, router);
+    currentPlanIndex = 0;
+  }
+
+  if (optimalPathCache && currentPlanIndex < optimalPathCache.length) {
+    return optimalPathCache[currentPlanIndex++];
+  }
+  return { type: "END_ROUND" };
+}
+
 function busRouteActionWithOverrides(
   state: RoundState,
   observation: Parameters<StrategyPolicy["nextAction"]>[1],
@@ -842,6 +862,9 @@ export function withPolicyOverrides(basePolicy: StrategyPolicy, overrides?: Part
       }
       if (basePolicy.name === FixedRouteCapacity2Policy.name) {
         return fixedRouteActionWithOverrides(state, observation, config, normalized);
+      }
+      if (basePolicy.name === OptimalOmniscientPolicy.name) {
+        return optimalActionWithOverrides(state, observation, config, normalized);
       }
       return overrideDropActionForResourceOrder(
         state,

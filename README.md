@@ -4,7 +4,7 @@ Browser-based TypeScript simulator for comparing routing policies, visualizing t
 
 ## What the app does
 
-- Simulates one RoboSurvivor round on a graph-based map with seeded branch randomization.
+- Simulates one RoboSurvivor round on a graph-based map with layout-id-first selection and optional seed-based reproduction.
 - Compares five policies:
   - `Baseline_SingleCarry`
   - `BusRoute_Parametric`
@@ -28,7 +28,7 @@ Browser-based TypeScript simulator for comparing routing policies, visualizing t
 - Each major section includes an `Info` button with detailed explanations.
 - The selected policy now shows a plain-language explanation and its decision flow.
 - Trace playback supports pause/resume.
-- Batch mode ranks every policy on the same seed range for fair comparison.
+- Batch mode can compare policies over seed sampling or an exact sweep of all 576 legal layouts.
 
 ## Run locally
 
@@ -59,6 +59,22 @@ npm run generate:artifacts
 
 Generated files are written to [`artifacts/`](/Users/yoyojun/Documents/GitHub/path-planning-simulator/artifacts).
 
+## Generate STM32 C tables
+
+```bash
+npm run generate:stm32
+```
+
+Generated files are written to [`generated/stm32/`](/Users/yoyojun/Documents/GitHub/path-planning-simulator/generated/stm32), including:
+
+- normal omniscient export:
+  `generated_plan_table.c/.h`
+- true-LiFo constrained export:
+  `generated_plan_table_lifo.c/.h`
+- shared layout and route tables:
+  `generated_layouts.*`
+  `generated_routes.*`
+
 ## Project structure
 
 - [`src/main.ts`](/Users/yoyojun/Documents/GitHub/path-planning-simulator/src/main.ts): browser UI, playback, exports, and map editor wiring.
@@ -69,6 +85,7 @@ Generated files are written to [`artifacts/`](/Users/yoyojun/Documents/GitHub/pa
 
 ## Notes
 
-- Keep the same seed when comparing policies on a single layout.
-- Use batch mode instead of one-off runs when you want a meaningful policy comparison.
+- Use `layout_id` on the main page when you want to discuss or reproduce one exact legal field arrangement.
+- Use the advanced `seed` field when you want to map a seeded random case back to a layout ID.
+- Use `Exact layout sweep` batch mode for the strongest uniform benchmark across all 576 legal layouts.
 - Geometry edits change edge distances, so route timing and heuristic choices can shift after map edits.

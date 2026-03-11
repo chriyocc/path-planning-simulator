@@ -165,15 +165,19 @@ export interface SimulationConfig {
 }
 
 export interface SimulationResult {
-  seed: number;
+  seed: number | null;
+  layout_id: number;
   state: RoundState;
   trace: TraceStep[];
   legality_violations: string[];
   policy_name: string;
 }
 
+export type BatchSourceMode = "seed_sampling" | "exact_layout_sweep";
+
 export interface BatchResult {
   policy_name: string;
+  batch_source: BatchSourceMode;
   runs: number;
   mean_score: number;
   completion_rate: number;
@@ -181,7 +185,7 @@ export interface BatchResult {
   p50_time_s: number;
   p90_time_s: number;
   violations_count: number;
-  top_seed_samples: Array<{ seed: number; score: number; time_s: number }>;
+  top_samples: Array<{ seed: number | null; layout_id: number; score: number; time_s: number }>;
 }
 
 export interface StrategyPolicy {

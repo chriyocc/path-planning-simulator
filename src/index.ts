@@ -1,5 +1,7 @@
 export * from "./types";
+export * from "./layouts";
 export * from "./map";
+export * from "./randomization";
 export * from "./simulator";
 export * from "./policies";
 export * from "./batch";

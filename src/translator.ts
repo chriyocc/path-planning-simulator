@@ -40,6 +40,8 @@ export interface TutorialExecutionStep extends DecodedPlanAction {
   routeEntry: string;
 }
 
+export type TutorialPlanMode = "normal" | "lifo";
+
 export const BRANCH_ID_LABELS = ["RED", "YELLOW", "BLUE", "GREEN"] as const;
 export const COLOR_ID_LABELS = ["RED", "YELLOW", "BLUE", "GREEN"] as const;
 export const SLOT_ID_LABELS = ["first slot", "second slot"] as const;
@@ -77,13 +79,13 @@ export function findLayoutIdForPlacement(placement: TutorialPlacement): number |
   return match?.id ?? null;
 }
 
-export function buildPlanForPlacement(placement: TutorialPlacement): ParsedPlanRow {
+export function buildPlanForPlacement(placement: TutorialPlacement, mode: TutorialPlanMode = "normal"): ParsedPlanRow {
   const layoutId = findLayoutIdForPlacement(placement);
   if (layoutId === null) {
     throw new Error("Placement does not match a legal layout.");
   }
   const layout = enumerateLegalLayouts()[layoutId];
-  return buildPlanForLayout(createDefaultPlanningConfig(), layout);
+  return buildPlanForLayout(createDefaultPlanningConfig(), layout, mode);
 }
 
 function actionTypeLabel(type: string): string {

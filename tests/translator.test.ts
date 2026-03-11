@@ -46,6 +46,12 @@ describe("translator helpers", () => {
     expect(plan.actions.length).toBe(plan.action_count);
   });
 
+  it("can build the LiFo tutorial plan for a valid placement", () => {
+    const plan = buildPlanForPlacement(createDefaultTutorialPlacement(), "lifo");
+    expect(plan.action_count).toBeGreaterThan(0);
+    expect(plan.actions.length).toBe(plan.action_count);
+  });
+
   it("decodes branch and slot ids into beginner-friendly explanations", () => {
     expect(decodePlanAction({ type: "ACT_PICK_RESOURCE", arg0: 3, arg1: 1 })).toEqual({
       raw: "ACT_PICK_RESOURCE, 3, 1",

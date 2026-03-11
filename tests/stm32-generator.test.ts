@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDefaultGraph } from "../src/map";
-import { computeOptimalPolicy } from "../src/planner";
+import { computeOptimalPolicy, computeOptimalPolicyLiFo } from "../src/planner";
 import { GraphRouter } from "../src/router";
 import { createDefaultSimulationConfig } from "../src/simulator";
 import {
@@ -9,6 +9,7 @@ import {
   enumerateLegalLayouts,
   renderStm32Tables
 } from "../src/generateStm32Tables";
+import type { BranchId, ResourceColor } from "../src/types";
 
 describe("stm32 table generation", () => {
   it("enumerates exactly 576 legal layouts", () => {
@@ -29,11 +30,16 @@ describe("stm32 table generation", () => {
   it("builds non-empty plans within the configured maximum", () => {
     const data = buildStm32TablesData();
     expect(data.planTable).toHaveLength(576);
+    expect(data.planTableLiFo).toHaveLength(576);
     for (const plan of data.planTable) {
       expect(plan.action_count).toBeGreaterThan(0);
       expect(plan.action_count).toBeLessThanOrEqual(MAX_PLAN_ACTIONS);
     }
-  });
+    for (const plan of data.planTableLiFo) {
+      expect(plan.action_count).toBeGreaterThan(0);
+      expect(plan.action_count).toBeLessThanOrEqual(MAX_PLAN_ACTIONS);
+    }
+  }, 15000);
 
   it("builds valid routes between every important node pair", () => {
     const data = buildStm32TablesData();
@@ -55,6 +61,8 @@ describe("stm32 table generation", () => {
 
     expect(files["generated_plan_table.h"]).toContain("#define MAX_PLAN_ACTIONS 32");
     expect(files["generated_plan_table.c"]).toContain("const plan_desc_t g_plan_table[576] = {");
+    expect(files["generated_plan_table_lifo.h"]).toContain("extern const plan_desc_t g_plan_table_lifo[576];");
+    expect(files["generated_plan_table_lifo.c"]).toContain("const plan_desc_t g_plan_table_lifo[576] = {");
 
     expect(files["generated_routes.h"]).toContain("extern const route_entry_t g_route_table[NODE_ID_T_COUNT][NODE_ID_T_COUNT];");
     expect(files["generated_routes.c"]).toContain("/* Route steps are derived from node paths as a first-pass junction abstraction. */");
@@ -92,5 +100,56 @@ describe("stm32 table generation", () => {
     const generatedPlan = data.planTable[layout.id];
     expect(generatedPlan.action_count).toBe(directPlan.length);
     expect(generatedPlan.actions[0].type).toBe(directPlan[0].type);
+  });
+
+  it("enforces true LiFo when the planner starts with stacked carried resources", () => {
+    const graph = createDefaultGraph();
+    const config = createDefaultSimulationConfig(graph);
+    const router = new GraphRouter(config.map, config.robot);
+    const layout = {
+      id: 999,
+      slots: {
+        RED: ["RED", "GREEN"],
+        YELLOW: ["YELLOW", "RED"],
+        BLUE: ["BLUE", "YELLOW"],
+        GREEN: ["GREEN", "BLUE"]
+      } as Record<BranchId, [ResourceColor, ResourceColor]>
+    };
+    const lifoPlan = computeOptimalPolicyLiFo(
+      config,
+      {
+        current_node: "J_MAIN",
+        branch_to_resources: layout.slots,
+        locks_cleared: { RED: true, YELLOW: true, BLUE: true, GREEN: true },
+        picked_slots: { R_RED_1: true, R_RED_2: true },
+        inventory: [
+          { color: "RED", sourceBranch: "RED" },
+          { color: "GREEN", sourceBranch: "RED" }
+        ],
+        holding_locks_for_branches: [],
+        holding_lock_for_branch: null,
+        placed_locks: [],
+        placed_resources: [],
+        score: 0,
+        time_elapsed_s: 0,
+        started_navigation: true,
+        reached_main_junction: true,
+        completed: false,
+        returned_to_start: false
+      },
+      router
+    );
+
+    expect(lifoPlan[0]).toEqual({ type: "DROP_RESOURCE", color: "GREEN" });
+  });
+
+  it("emits at least one layout where LiFo and normal exported plans differ", () => {
+    const data = buildStm32TablesData();
+    const hasDifferentLayout = data.planTable.some((plan, index) => {
+      const lifoPlan = data.planTableLiFo[index];
+      return JSON.stringify(plan) !== JSON.stringify(lifoPlan);
+    });
+
+    expect(hasDifferentLayout).toBe(true);
   });
 });
