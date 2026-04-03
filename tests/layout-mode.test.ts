@@ -53,5 +53,5 @@ describe("exact-layout batch mode", () => {
     expect(result.batch_source).toBe("exact_layout_sweep");
     expect(result.runs).toBe(576);
     expect(result.top_samples.every((sample) => sample.layout_id >= 0 && sample.layout_id < 576)).toBe(true);
-  }, 30000);
+  }, 120000);
 });

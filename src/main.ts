@@ -29,6 +29,7 @@ import type {
   Graph,
   LineType,
   LockClearStrategyMode,
+  PolicyStatusSnapshot,
   PolicyOverrides,
   ResourceDropOrderMode,
   ResourceColor,
@@ -37,6 +38,14 @@ import type {
   StrategyPolicy,
   TraceStep
 } from "./types";
+import {
+  formatPolicyStatusPanel,
+  formatRandomizationPanel,
+  formatSingleSourceComparisonPanel,
+  type LayoutPanelMode,
+  type SingleSourceComparisonContext,
+  type SingleSourceComparisonEntry
+} from "./runtimePanels";
 import { renderTranslatorPage } from "./translatorPage";
 
 interface Point {
@@ -138,6 +147,14 @@ const SECTION_INFO: Record<string, SectionInfo> = {
       "Zone fill shows how many correctly placed resources have been scored into each color zone so far."
     ]
   },
+  "car-status": {
+    title: "Car Status",
+    body: [
+      "This panel follows the currently rendered playback frame and shows what the active policy believes at that point in the run.",
+      "Current step comes from the policy decision snapshot before execution. Knowledge and candidate count come from the post-step snapshot after any legal reveal happens.",
+      "Policies that do not track hidden information still populate this panel with common status fields and a clear 'not used' knowledge note."
+    ]
+  },
   "round-summary": {
     title: "Round Summary",
     body: [
@@ -150,7 +167,7 @@ const SECTION_INFO: Record<string, SectionInfo> = {
   "branch-randomization": {
     title: "Branch Randomization",
     body: [
-      "Each branch contains two hidden colored resources. This panel reveals the exact legal layout used by the latest run.",
+      "Each branch contains two hidden colored resources. This panel can show either the full legal layout or only the information discovered so far during playback.",
       "Layout ID is the cleanest way to compare one exact case. Seed is still shown when the run came from seeded sampling.",
       "If a policy looks better on one layout, use exact layout sweep or seed sampling batch mode to see whether the advantage holds broadly."
     ]
@@ -349,6 +366,28 @@ const POLICY_INFO: Record<string, PolicyInfo> = {
       "Best used for benchmarking, not as a deployable runtime strategy.",
       "Planner cost may grow with problem complexity."
     ]
+  },
+  Inference_ExpectedValue: {
+    label: "Inference Expected Value",
+    summary: "An inference-aware policy that learns slot colors legally during the run, narrows candidate layouts, and then hands off to the optimal planner.",
+    whyUseIt: "Use this when you want a realistic hidden-information policy that still benefits from the repo’s offline planner once enough evidence exists.",
+    decisionFlow: [
+      "If the layout is already locked, follow the cached optimal remaining plan.",
+      "If a black lock is held, drop it first so the branch becomes legally available.",
+      "Prefer slot-1 pickups on cleared branches because they both score and reveal slot 2.",
+      "Otherwise reveal new slot-1 colors by picking locks on unrevealed branches.",
+      "Drop carried resources when already on the right zone or when capacity pressure makes continued exploration risky."
+    ],
+    strengths: [
+      "Respects hidden information instead of reading the layout up front.",
+      "Shows the candidate-set collapse directly in the simulator UI.",
+      "Reuses the optimal planner only after the layout becomes uniquely known."
+    ],
+    watchouts: [
+      "More computationally expensive than the simpler heuristics.",
+      "Pre-lock choices are bounded one-step estimates, not full belief-tree search.",
+      "Behavior is intentionally exploration-aware, so it may look less direct early in a run."
+    ]
   }
 };
 
@@ -481,7 +520,20 @@ app.innerHTML = `
         <button id="play">Play Trace</button>
         <button id="pauseTrace" disabled>Pause Trace</button>
         <button id="runBatch">Run Batch</button>
+        <button id="compareCurrentSource">Compare Policies</button>
       </div>
+    </section>
+
+    <section class="section-card" data-section="car-status">
+      <div class="section-heading">
+        <div>
+          <h2>Car Status</h2>
+          <p>Current step, next step, held cargo, and policy knowledge.</p>
+        </div>
+        <button class="info-button" type="button" data-info-target="car-status" aria-expanded="false">Info</button>
+      </div>
+      <div class="info-panel hidden" id="info-car-status"></div>
+      <div class="stat"><pre id="status"></pre></div>
     </section>
 
     <section class="section-card" data-section="policy-details">
@@ -545,6 +597,16 @@ app.innerHTML = `
       <div class="stat"><pre id="summary"></pre></div>
     </section>
 
+    <section class="section-card" data-section="single-source-compare">
+      <div class="section-heading">
+        <div>
+          <h2>Current Source Compare</h2>
+          <p>Compare all policies on the currently selected layout or seed.</p>
+        </div>
+      </div>
+      <div class="stat"><pre id="compare"></pre></div>
+    </section>
+
     <section class="section-card" data-section="branch-randomization">
       <div class="section-heading">
         <div>
@@ -554,6 +616,14 @@ app.innerHTML = `
         <button class="info-button" type="button" data-info-target="branch-randomization" aria-expanded="false">Info</button>
       </div>
       <div class="info-panel hidden" id="info-branch-randomization"></div>
+      <div class="controls">
+        <label>Layout View
+          <select id="layoutViewMode">
+            <option value="known_so_far">Known so far</option>
+            <option value="ground_truth">Ground truth</option>
+          </select>
+        </label>
+      </div>
       <div class="stat"><pre id="randomization"></pre></div>
     </section>
 
@@ -659,6 +729,7 @@ const speedInput = document.getElementById("speed") as HTMLInputElement;
 const speedValue = document.getElementById("speedValue") as HTMLInputElement;
 const randomSeedBtn = document.getElementById("randomSeed") as HTMLButtonElement;
 const runBatchBtn = document.getElementById("runBatch") as HTMLButtonElement;
+const compareCurrentSourceBtn = document.getElementById("compareCurrentSource") as HTMLButtonElement;
 const playBtn = document.getElementById("play") as HTMLButtonElement;
 const pauseTraceBtn = document.getElementById("pauseTrace") as HTMLButtonElement;
 const batchToast = document.getElementById("batchToast") as HTMLDivElement;
@@ -666,8 +737,11 @@ const policyDetailsEl = document.getElementById("policyDetails") as HTMLDivEleme
 
 const summaryEl = document.getElementById("summary") as HTMLPreElement;
 const batchEl = document.getElementById("batch") as HTMLPreElement;
+const compareEl = document.getElementById("compare") as HTMLPreElement;
 const randomizationEl = document.getElementById("randomization") as HTMLPreElement;
 const liveEl = document.getElementById("live") as HTMLPreElement;
+const statusEl = document.getElementById("status") as HTMLPreElement;
+const layoutViewModeSelect = document.getElementById("layoutViewMode") as HTMLSelectElement;
 
 const editModeSelect = document.getElementById("editMode") as HTMLSelectElement;
 const nodeSelect = document.getElementById("nodeSelect") as HTMLSelectElement;
@@ -686,6 +760,8 @@ policySelect.value = AdaptiveSafePolicy.name;
 
 let latestResult: SimulationResult | null = null;
 let latestBatch: BatchResult[] = [];
+let latestSingleSourceComparison: SingleSourceComparisonEntry[] = [];
+let latestSingleSourceContext: SingleSourceComparisonContext | null = null;
 let currentOverrides: PolicyOverrides = createDefaultPolicyOverrides();
 resourceDropOrderSelect.value = currentOverrides.resource_drop_order;
 blackLockCarrySelect.value = currentOverrides.black_lock_carry_mode;
@@ -696,6 +772,7 @@ let robotPose: RobotPose = { ...nodePoint(graph.startNodeId), heading: -Math.PI 
 let visualState: VisualState = emptyVisualState();
 let animationHandle = 0;
 let draggedNodeId: string | null = null;
+let layoutViewMode: LayoutPanelMode = "known_so_far";
 let activeAnimation: {
   startTs: number;
   pausedAtMs: number;
@@ -1269,14 +1346,6 @@ function summarizeResult(result: SimulationResult): void {
   }
 
   summaryEl.textContent = lines.join("\n");
-
-  randomizationEl.textContent = Object.entries(s.branch_to_resources)
-    .map(([branch, colors]) => `${branch}: ${colors.join(", ")}`)
-    .join("\n");
-  randomizationEl.textContent += `\nlayout_id=${result.layout_id}`;
-  randomizationEl.textContent += result.seed === null
-    ? `\nseed=n/a (direct layout run)`
-    : `\nseed=${result.seed} (this seed resolved to layout_id=${result.layout_id})`;
 }
 
 function updateLivePanel(timeoutS: number): void {
@@ -1287,6 +1356,32 @@ function updateLivePanel(timeoutS: number): void {
     `carrying=[locks=${visualState.holdingLockCount}, resources=${visualState.inventory.map((item) => `${item.color}${item.sourceBranch ? `:${item.sourceBranch}` : ""}`).join(", ") || "empty"}]`,
     `zone_fill: R=${visualState.zonePlaced.RED} Y=${visualState.zonePlaced.YELLOW} B=${visualState.zonePlaced.BLUE} G=${visualState.zonePlaced.GREEN}`
   ].join("\n");
+}
+
+function displayedSnapshot(
+  result: SimulationResult | null,
+  stepIdx?: number,
+  progressInStep = 1
+): PolicyStatusSnapshot | null {
+  if (!result || result.policy_snapshots.length === 0) return null;
+  if (stepIdx === undefined) {
+    return result.policy_snapshots.at(-1)?.post_step ?? null;
+  }
+  const clampedStep = Math.max(0, Math.min(stepIdx, result.policy_snapshots.length - 1));
+  return progressInStep >= 1
+    ? result.policy_snapshots[clampedStep].post_step
+    : result.policy_snapshots[clampedStep].decision;
+}
+
+function updateStatusPanel(snapshot: PolicyStatusSnapshot | null): void {
+  statusEl.textContent = formatPolicyStatusPanel(snapshot, {
+    holdingLockCount: visualState.holdingLockCount,
+    inventory: visualState.inventory
+  });
+}
+
+function updateRandomizationPanel(result: SimulationResult | null, snapshot: PolicyStatusSnapshot | null): void {
+  randomizationEl.textContent = formatRandomizationPanel(result, snapshot, layoutViewMode);
 }
 
 function summarizeBatch(items: BatchResult[]): void {
@@ -1301,6 +1396,47 @@ function summarizeBatch(items: BatchResult[]): void {
         `${i + 1}. ${r.policy_name}\n  source=${r.batch_source}\n  runs=${r.runs}\n  mean_score=${r.mean_score}\n  completion=${r.completion_rate}%\n  mean_time=${r.mean_time_s}s p50=${r.p50_time_s}s p90=${r.p90_time_s}s\n  violations=${r.violations_count}`
     )
     .join("\n\n");
+}
+
+function currentComparisonContext(): SingleSourceComparisonContext {
+  const exact = batchSourceSelect.value === "exact_layout_sweep";
+  if (exact) {
+    const layoutId = clampLayoutId(Number(layoutIdInput.value));
+    layoutIdInput.value = String(layoutId);
+    return {
+      mode: "exact_layout_sweep",
+      seed: null,
+      layout_id: layoutId
+    };
+  }
+
+  const seed = Math.max(1, Number(seedInput.value) || 1);
+  seedInput.value = String(seed);
+  const layoutId = layoutIdForSeed(seed);
+  layoutIdInput.value = String(layoutId);
+  return {
+    mode: "seed_sampling",
+    seed,
+    layout_id: layoutId
+  };
+}
+
+function updateSingleSourceComparisonPanel(): void {
+  compareEl.textContent = formatSingleSourceComparisonPanel(
+    latestSingleSourceContext,
+    latestSingleSourceComparison
+  );
+}
+
+function simulateForComparison(
+  config: SimulationConfig,
+  policy: StrategyPolicy,
+  context: SingleSourceComparisonContext
+): SimulationResult {
+  if (context.mode === "exact_layout_sweep") {
+    return simulateRoundForLayout(config, policy, context.layout_id);
+  }
+  return simulateRound(config, policy, context.seed ?? 1);
 }
 
 function parsePickedColor(step: TraceStep, branchToResources: SimulationResult["state"]["branch_to_resources"]): ResourceColor | null {
@@ -1423,6 +1559,8 @@ function runRound(): void {
     visualState.zonePlaced[placed.color]++;
   }
   updateLivePanel(config.timeout_s);
+  updateStatusPanel(displayedSnapshot(result));
+  updateRandomizationPanel(result, displayedSnapshot(result));
   drawMap();
   renderPolicyDetails(policySelect.value);
   summarizeResult(result);
@@ -1488,6 +1626,8 @@ function scheduleActiveAnimationFrame(): void {
 
     visualState = deriveVisualState(activeAnimation.result, a.stepIdx, a.stepProgress);
     updateLivePanel(baseConfig.timeout_s);
+    updateStatusPanel(displayedSnapshot(activeAnimation.result, a.stepIdx, a.stepProgress));
+    updateRandomizationPanel(activeAnimation.result, displayedSnapshot(activeAnimation.result, a.stepIdx, a.stepProgress));
     drawMap();
 
     if (t < 1) {
@@ -1495,6 +1635,8 @@ function scheduleActiveAnimationFrame(): void {
     } else {
       visualState = deriveVisualState(activeAnimation.result, activeAnimation.result.trace.length - 1, 1);
       updateLivePanel(baseConfig.timeout_s);
+      updateStatusPanel(displayedSnapshot(activeAnimation.result));
+      updateRandomizationPanel(activeAnimation.result, displayedSnapshot(activeAnimation.result));
       drawMap();
       stopTracePlayback(true);
     }
@@ -1567,6 +1709,31 @@ async function runBatch(): Promise<void> {
   } finally {
     showBatchToast(false);
     runBatchBtn.disabled = false;
+  }
+}
+
+async function compareCurrentSource(): Promise<void> {
+  if (compareCurrentSourceBtn.disabled) return;
+  compareCurrentSourceBtn.disabled = true;
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+  try {
+    const config = configFromInputs();
+    const context = currentComparisonContext();
+    latestSingleSourceContext = context;
+    latestSingleSourceComparison = ALL_POLICIES.map((policy) => {
+      const result = simulateForComparison(config, policy, context);
+      return {
+        policy_name: policy.name,
+        score: result.state.score,
+        time_s: result.state.time_elapsed_s,
+        completed: result.state.returned_to_start && result.state.placed_resources.length === 8,
+        violations: result.legality_violations.length
+      };
+    });
+    updateSingleSourceComparisonPanel();
+  } finally {
+    compareCurrentSourceBtn.disabled = false;
   }
 }
 
@@ -1678,6 +1845,11 @@ lockClearStrategySelect.onchange = () => {
   renderPolicyDetails(policySelect.value);
 };
 
+layoutViewModeSelect.onchange = () => {
+  layoutViewMode = layoutViewModeSelect.value as LayoutPanelMode;
+  updateRandomizationPanel(latestResult, displayedSnapshot(latestResult));
+};
+
 layoutIdInput.onchange = () => {
   layoutIdInput.value = String(clampLayoutId(Number(layoutIdInput.value)));
 };
@@ -1716,6 +1888,8 @@ randomSeedBtn.onclick = () => {
     visualState.zonePlaced[placed.color]++;
   }
   updateLivePanel(config.timeout_s);
+  updateStatusPanel(displayedSnapshot(result));
+  updateRandomizationPanel(result, displayedSnapshot(result));
   drawMap();
   renderPolicyDetails(policySelect.value);
   summarizeResult(result);
@@ -1800,6 +1974,9 @@ pauseTraceBtn.onclick = () => {
 runBatchBtn.onclick = () => {
   void runBatch();
 };
+compareCurrentSourceBtn.onclick = () => {
+  void compareCurrentSource();
+};
 
 (document.getElementById("exportRoute") as HTMLButtonElement).onclick = () => {
   if (!latestResult) runRound();
@@ -1823,9 +2000,11 @@ renderGameStrategy();
 drawMap();
 // runRound();  // Don't run on load - wait for user to click
 summarizeBatch([]);
+updateSingleSourceComparisonPanel();
 updateLivePanel(baseConfig.timeout_s);
+updateStatusPanel(null);
 summaryEl.textContent = "Run a round to see the latest layout_id, score, legality, and trace depth.";
-randomizationEl.textContent = "Run a round to reveal the exact legal layout used by the simulator.";
+updateRandomizationPanel(null, null);
 syncLayoutIdFromSeed();
 syncBatchControls();
 }

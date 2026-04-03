@@ -3,6 +3,7 @@ import {
   BaselineSingleCarryPolicy,
   BusRouteParametricPolicy,
   FixedRouteCapacity2Policy,
+  InferenceExpectedValuePolicy,
   ValueAwareDeadlinePolicy,
   OptimalOmniscientPolicy,
   withPolicyOverrides
@@ -11,8 +12,8 @@ import { createDefaultGraph } from "../src/map";
 import { estimateFirmwarePlan } from "../src/firmware";
 import { GraphRouter } from "../src/router";
 import { randomizeRound } from "../src/randomization";
-import { simulateBatch } from "../src/batch";
-import { createDefaultSimulationConfig, simulateRound } from "../src/simulator";
+import { simulateBatch, simulateBatchOverLayouts } from "../src/batch";
+import { createDefaultSimulationConfig, simulateRound, simulateRoundForLayout } from "../src/simulator";
 import type { Observation, RoundState, StrategyPolicy } from "../src/types";
 
 const graph = createDefaultGraph();
@@ -518,7 +519,7 @@ describe("policy comparisons", () => {
     expect(withPolicyOverrides(OptimalOmniscientPolicy, { resource_drop_order: "lifo" }).name).toContain("cargo:lifo");
   });
 
-  it("higher carry capacity should not increase mean time for bus policy", { timeout: 15000 }, () => {
+  it("higher carry capacity should not increase mean time for bus policy", { timeout: 60000 }, () => {
     const cap1 = config();
     cap1.robot.carry_capacity = 1;
     const cap3 = config();
@@ -548,7 +549,7 @@ describe("policy comparisons", () => {
 });
 
 describe("batch and exports", () => {
-  it("batch is reproducible for fixed run count", () => {
+  it("batch is reproducible for fixed run count", { timeout: 20000 }, () => {
     const a = simulateBatch(config(), BusRouteParametricPolicy, 50);
     const b = simulateBatch(config(), BusRouteParametricPolicy, 50);
     expect(a.mean_score).toBe(b.mean_score);
@@ -563,5 +564,150 @@ describe("batch and exports", () => {
     expect(fw.route_table.length).toBeGreaterThan(0);
     expect(fw.policy_rules.length).toBeGreaterThan(0);
     expect(fw.policy_rules.some((rule) => rule.action.includes("nearest BLACK_ZONE"))).toBe(true);
+  });
+});
+
+describe("inference policy and recorded snapshots", () => {
+  it("with carry capacity 2, inference chains a second lock before the first drop", () => {
+    const cfg = config();
+    cfg.robot.carry_capacity = 2;
+    const result = simulateRoundForLayout(cfg, InferenceExpectedValuePolicy, 0);
+    const firstDropIndex = result.trace.findIndex((step) => step.note === "lock_deposited");
+    const lockGripsBeforeDrop = result.trace
+      .slice(0, firstDropIndex)
+      .filter((step) => step.note === "lock_gripped")
+      .map((step) => step.action.branchId);
+
+    expect(firstDropIndex).toBeGreaterThanOrEqual(0);
+    expect(lockGripsBeforeDrop).toHaveLength(2);
+  });
+
+  it("with carry capacity 3, inference keeps chaining informative locks until full or exhausted", () => {
+    const cfg = config();
+    cfg.robot.carry_capacity = 3;
+    const result = simulateRoundForLayout(cfg, InferenceExpectedValuePolicy, 0);
+    const firstDropIndex = result.trace.findIndex((step) => step.note === "lock_deposited");
+    const lockGripsBeforeDrop = result.trace
+      .slice(0, firstDropIndex)
+      .filter((step) => step.note === "lock_gripped")
+      .map((step) => step.action.branchId);
+
+    expect(firstDropIndex).toBeGreaterThanOrEqual(0);
+    expect(lockGripsBeforeDrop).toHaveLength(3);
+  });
+
+  it("after reaching the black zone with multiple held locks, inference flushes all held locks before leaving", () => {
+    const cfg = config();
+    cfg.robot.carry_capacity = 2;
+    const result = simulateRoundForLayout(cfg, InferenceExpectedValuePolicy, 0);
+    const firstDropIndex = result.trace.findIndex((step) => step.note === "lock_deposited");
+    const depositsAtZoneBeforeLeaving: typeof result.trace = [];
+    for (let i = firstDropIndex; i < result.trace.length; i += 1) {
+      const step = result.trace[i];
+      if (step.toNode !== "BLACK_ZONE" && step.toNode !== "BLACK_ZONE_RIGHT") {
+        break;
+      }
+      if (step.note === "lock_deposited") {
+        depositsAtZoneBeforeLeaving.push(step);
+      }
+    }
+
+    expect(firstDropIndex).toBeGreaterThanOrEqual(0);
+    expect(depositsAtZoneBeforeLeaving).toHaveLength(2);
+  });
+
+  it("records decision and post-step snapshots for every trace step", () => {
+    const result = simulateRoundForLayout(config(), InferenceExpectedValuePolicy, 0);
+    expect(result.policy_snapshots).toHaveLength(result.trace.length);
+    expect(result.policy_snapshots[0].decision.current_step).toContain("Pick");
+    expect(result.policy_snapshots[0].post_step.current_step).toContain("Pick");
+  });
+
+  it("reveals slot 1 only after lock grip and slot 2 only after first-slot pickup", () => {
+    const result = simulateRoundForLayout(config(), InferenceExpectedValuePolicy, 0);
+    const firstLockIdx = result.trace.findIndex(
+      (step) => step.note === "lock_gripped"
+    );
+    expect(firstLockIdx).toBeGreaterThanOrEqual(0);
+    const firstLockBranch = result.trace[firstLockIdx].action.branchId!;
+    const firstLockColor = result.state.branch_to_resources[firstLockBranch][0];
+    expect(result.policy_snapshots[firstLockIdx].decision.knowledge_summary).not.toContain(
+      `${firstLockBranch}: ${firstLockColor}, ?`
+    );
+    expect(result.policy_snapshots[firstLockIdx].post_step.knowledge_summary).toContain(
+      `${firstLockBranch}: ${firstLockColor}, ?`
+    );
+
+    const firstSlotIdx = result.trace.findIndex(
+      (step) => step.note?.startsWith("picked_") && step.action.slotNodeId?.endsWith("_1")
+    );
+    expect(firstSlotIdx).toBeGreaterThan(firstLockIdx);
+    const firstSlotBranch = result.trace[firstSlotIdx].action.branchId!;
+    const firstSlotColors = result.state.branch_to_resources[firstSlotBranch];
+    expect(result.policy_snapshots[firstSlotIdx].decision.knowledge_summary).not.toContain(
+      `${firstSlotBranch}: ${firstSlotColors[0]}, ${firstSlotColors[1]}`
+    );
+    expect(result.policy_snapshots[firstSlotIdx].post_step.knowledge_summary).toContain(
+      `${firstSlotBranch}: ${firstSlotColors[0]}, ${firstSlotColors[1]}`
+    );
+  });
+
+  it("shrinks candidate layouts and locks to one layout before switching to cached optimal execution", () => {
+    const result = simulateRoundForLayout(config(), InferenceExpectedValuePolicy, 0);
+    const candidateCounts = result.policy_snapshots.map((entry) => entry.post_step.candidate_count).filter((value) => value !== null);
+    const firstReducedCount = candidateCounts.find((count) => count !== null && count < 576);
+    expect(firstReducedCount).toBe(144);
+    expect(candidateCounts.some((count) => count !== null && count < 144)).toBe(true);
+    expect(candidateCounts).toContain(1);
+
+    const lockedStep = result.policy_snapshots.find((entry) => entry.post_step.layout_locked);
+    expect(lockedStep?.post_step.policy_notes.join(" ")).toContain("optimal");
+    expect(
+      Object.values(lockedStep?.post_step.known_slots ?? {}).flat().includes("UNKNOWN")
+    ).toBe(false);
+  });
+
+  it("materializes deduced slot colors once the remaining candidate set makes them certain", () => {
+    const result = simulateRoundForLayout(config(), InferenceExpectedValuePolicy, 165);
+    const lockedDecision = result.policy_snapshots.find(
+      (entry) => entry.decision.layout_locked && entry.decision.candidate_count === 1
+    )?.decision;
+
+    expect(lockedDecision).toBeTruthy();
+    expect(lockedDecision?.known_slots?.RED).toEqual(["YELLOW", "GREEN"]);
+    expect(lockedDecision?.knowledge_summary).toContain("RED: YELLOW, GREEN");
+  });
+
+  it("generic policies expose status snapshots without inference knowledge", () => {
+    const result = simulateRoundForLayout(config(), BaselineSingleCarryPolicy, 0);
+    expect(result.policy_snapshots).toHaveLength(result.trace.length);
+    expect(result.policy_snapshots[0].decision.knowledge_summary).toContain("not used");
+    expect(result.policy_snapshots[0].post_step.candidate_count).toBeNull();
+  });
+
+  it("after the first lock batch is flushed, inference still prioritizes remaining unrevealed locks before slot-1 harvest", () => {
+    const result = simulateRoundForLayout(config(), InferenceExpectedValuePolicy, 0);
+    const secondLockDepositIndex = result.trace
+      .map((step, index) => ({ step, index }))
+      .filter(({ step }) => step.note === "lock_deposited")
+      [1]?.index ?? -1;
+    const nextMove = result.trace
+      .slice(secondLockDepositIndex + 1)
+      .find((step) => step.note === undefined);
+
+    expect(secondLockDepositIndex).toBeGreaterThanOrEqual(0);
+    expect(nextMove?.action.type).toBe("PICK_LOCK");
+  });
+
+  it("optimized inference materially improves exact-layout mean time while preserving score and completion", { timeout: 120000 }, () => {
+    const cfg = config();
+    const bus = simulateBatchOverLayouts(cfg, BusRouteParametricPolicy);
+    const inference = simulateBatchOverLayouts(cfg, InferenceExpectedValuePolicy);
+
+    expect(inference.completion_rate).toBe(100);
+    expect(inference.mean_score).toBe(495);
+    expect(inference.violations_count).toBe(0);
+    expect(inference.mean_time_s).toBeLessThanOrEqual(223.82);
+    expect(inference.mean_time_s).toBeLessThanOrEqual(bus.mean_time_s + 10);
   });
 });

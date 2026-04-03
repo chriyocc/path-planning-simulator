@@ -3,9 +3,11 @@ import { appPageHref, resolveAppPage } from "../src/appRoutes";
 import {
   buildTutorialExecution,
   buildPlanForPlacement,
+  clampTutorialLayoutId,
   createDefaultTutorialPlacement,
   decodePlanAction,
   findLayoutIdForPlacement,
+  getPlacementForLayoutId,
   parsePlanRowText,
   renderTutorialSteps,
   validatePlacementRows
@@ -27,6 +29,18 @@ describe("translator helpers", () => {
 
   it("finds the expected layout id for the default tutorial placement", () => {
     expect(findLayoutIdForPlacement(createDefaultTutorialPlacement())).toBe(0);
+  });
+
+  it("builds the expected placement from a valid layout id", () => {
+    expect(getPlacementForLayoutId(0)).toEqual(createDefaultTutorialPlacement());
+    expect(findLayoutIdForPlacement(getPlacementForLayoutId(137))).toBe(137);
+  });
+
+  it("clamps layout ids into the legal tutorial range", () => {
+    expect(clampTutorialLayoutId(-1)).toBe(0);
+    expect(clampTutorialLayoutId(17.8)).toBe(17);
+    expect(clampTutorialLayoutId(999)).toBe(575);
+    expect(clampTutorialLayoutId(Number.NaN)).toBe(0);
   });
 
   it("rejects invalid manual placements with duplicate row colors", () => {

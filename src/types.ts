@@ -169,6 +169,7 @@ export interface SimulationResult {
   layout_id: number;
   state: RoundState;
   trace: TraceStep[];
+  policy_snapshots: PolicySnapshotEntry[];
   legality_violations: string[];
   policy_name: string;
 }
@@ -188,9 +189,53 @@ export interface BatchResult {
   top_samples: Array<{ seed: number | null; layout_id: number; score: number; time_s: number }>;
 }
 
+export type KnownResourceColor = Exclude<ResourceColor, "BLACK"> | "UNKNOWN";
+
+export interface PolicyKnownSlots {
+  RED: [KnownResourceColor, KnownResourceColor];
+  YELLOW: [KnownResourceColor, KnownResourceColor];
+  BLUE: [KnownResourceColor, KnownResourceColor];
+  GREEN: [KnownResourceColor, KnownResourceColor];
+}
+
+export interface PolicyStatusSnapshot {
+  current_step: string;
+  next_step: string;
+  holding: string;
+  knowledge_summary: string;
+  candidate_count: number | null;
+  layout_locked: boolean;
+  policy_notes: string[];
+  known_slots: PolicyKnownSlots | null;
+}
+
+export interface PolicySnapshotEntry {
+  decision: PolicyStatusSnapshot;
+  post_step: PolicyStatusSnapshot;
+}
+
+export interface PolicyDecision {
+  action: Action;
+  snapshot?: PolicyStatusSnapshot;
+}
+
+export interface PolicyRevealEvent {
+  branchId: BranchId;
+  slotIndex: 0 | 1;
+  color: Exclude<ResourceColor, "BLACK">;
+}
+
+export interface PolicyTraceEvent {
+  action: Action;
+  note?: string;
+  reveals: PolicyRevealEvent[];
+}
+
 export interface StrategyPolicy {
   name: string;
   nextAction(state: RoundState, observation: Observation, config: SimulationConfig): Action;
+  decide?(state: RoundState, observation: Observation, config: SimulationConfig): PolicyDecision;
+  onTraceStep?(state: RoundState, event: PolicyTraceEvent, config: SimulationConfig): PolicyStatusSnapshot;
 }
 
 export type BlackLockCarryMode = "auto" | "single" | "fill_capacity";

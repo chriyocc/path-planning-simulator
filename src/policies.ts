@@ -9,6 +9,8 @@ import type {
 } from "./types";
 import { computeOptimalPolicy, computeOptimalPolicyLiFo } from "./planner";
 import { GraphRouter } from "./router";
+export { InferenceExpectedValuePolicy } from "./inferencePolicy";
+import { InferenceExpectedValuePolicy } from "./inferencePolicy";
 
 const BRANCHES: BranchId[] = ["RED", "YELLOW", "BLUE", "GREEN"];
 const FIXED_BRANCH_ORDER: BranchId[] = ["YELLOW", "BLUE", "GREEN", "RED"];
@@ -845,7 +847,7 @@ export function withPolicyOverrides(basePolicy: StrategyPolicy, overrides?: Part
         ? `locks:${lockSuffix}|cargo:${resourceDropSuffix}`
         : `cargo:${resourceDropSuffix}`;
 
-  return {
+  const wrapped: StrategyPolicy = {
     name: `${basePolicy.name}[${nameSuffix}]`,
     nextAction(state, observation, config) {
       if (basePolicy.name === BaselineSingleCarryPolicy.name) {
@@ -873,6 +875,22 @@ export function withPolicyOverrides(basePolicy: StrategyPolicy, overrides?: Part
       );
     }
   };
+
+  if (basePolicy.decide) {
+    wrapped.decide = (state, observation, config) => {
+      const decision = basePolicy.decide!(state, observation, config);
+      return {
+        ...decision,
+        action: overrideDropActionForResourceOrder(state, decision.action, normalized)
+      };
+    };
+  }
+
+  if (basePolicy.onTraceStep) {
+    wrapped.onTraceStep = (state, event, config) => basePolicy.onTraceStep!(state, event, config);
+  }
+
+  return wrapped;
 }
 
 export const ALL_POLICIES: StrategyPolicy[] = [
@@ -881,5 +899,6 @@ export const ALL_POLICIES: StrategyPolicy[] = [
   ValueAwareDeadlinePolicy,
   AdaptiveSafePolicy,
   FixedRouteCapacity2Policy,
-  OptimalOmniscientPolicy
+  OptimalOmniscientPolicy,
+  InferenceExpectedValuePolicy
 ];

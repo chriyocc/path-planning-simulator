@@ -10,7 +10,15 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "generate:artifacts": "tsx src/generateArtifacts.ts",
-    "generate:stm32": "tsx src/generateStm32Tables.ts"
+    "generate:stm32": "tsx src/generateStm32Tables.ts",
+    "video:install": "npm --prefix video install",
+    "video:studio": "npm --prefix video run studio",
+    "video:render": "npm --prefix video run render",
+    "video:test": "npm --prefix video run test",
+    "slides:install": "npm --prefix slides install",
+    "slides:dev": "npm --prefix slides run dev",
+    "slides:build": "npm --prefix slides run build",
+    "slides:test": "npm --prefix slides run test"
   },
   "devDependencies": {
     "@types/node": "^25.3.1",

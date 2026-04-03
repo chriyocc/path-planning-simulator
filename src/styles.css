@@ -416,6 +416,37 @@ pre {
   gap: 10px;
 }
 
+.translator-alt-input {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e6d8bc;
+  border-radius: 12px;
+  background: #fff8ec;
+}
+
+.translator-alt-copy {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #6b5d48;
+}
+
+.translator-inline-field {
+  display: grid;
+  gap: 6px;
+  max-width: 220px;
+}
+
+.translator-inline-field input {
+  width: 100%;
+  border: 1px solid #d5c6a9;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #fffdf8;
+  color: var(--ink);
+}
+
 .translator-placement-card,
 .translator-result-card {
   display: grid;

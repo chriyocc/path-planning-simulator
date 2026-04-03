@@ -62,7 +62,6 @@ export function createDefaultMapSpec(): MapSpec {
       { id: "ZONE_BLUE", kind: "COLOR_ZONE", x_mm: 950, y_mm: 400, meta: { color: "BLUE" } },
       { id: "ZONE_GREEN", kind: "COLOR_ZONE", x_mm: 950, y_mm: 700, meta: { color: "GREEN" } },
 
-      { id: "J_RED", kind: "JUNCTION", x_mm: 550, y_mm: 1150 },
       { id: "ENTRY_RED", kind: "BRANCH_ENTRY", x_mm: 550, y_mm: 1350, meta: { branchId: "RED" } },
       { id: "LOCK_RED", kind: "BRANCH_SLOT", x_mm: 550, y_mm: 1410, meta: { branchId: "RED", color: "BLACK", slotIndex: 0 } },
       { id: "R_RED_1", kind: "BRANCH_SLOT", x_mm: 550, y_mm: 1470, meta: { branchId: "RED", slotIndex: 1 } },
@@ -89,8 +88,7 @@ export function createDefaultMapSpec(): MapSpec {
     ],
     edges: [
       { id: "E_START_C", from: "START", to: "C_START", distance_mm: 300, line_type: "SOLID", bidirectional: true, turn_cost_class: "NONE" },
-      { id: "E_C_JR", from: "C_START", to: "J_RED", distance_mm: 250, line_type: "SOLID", bidirectional: true, turn_cost_class: "LIGHT" },
-      { id: "E_JREDM", from: "J_RED", to: "J_MAIN", distance_mm: 1, line_type: "SOLID", bidirectional: true, turn_cost_class: "NONE" },
+      { id: "E_C_JR", from: "C_START", to: "J_MAIN", distance_mm: 250, line_type: "SOLID", bidirectional: true, turn_cost_class: "LIGHT" },
       { id: "E_JR_JY", from: "J_MAIN", to: "J_YELLOW", distance_mm: 200, line_type: "SOLID", bidirectional: true, turn_cost_class: "NONE" },
       { id: "E_JY_JB", from: "J_YELLOW", to: "J_BLUE", distance_mm: 200, line_type: "SOLID", bidirectional: true, turn_cost_class: "NONE" },
       { id: "E_JB_JG", from: "J_BLUE", to: "J_GREEN", distance_mm: 200, line_type: "SOLID", bidirectional: true, turn_cost_class: "NONE" },
@@ -122,7 +120,7 @@ export function createDefaultMapSpec(): MapSpec {
       { id: "E_DELIVERY_BLUE", from: "LOOP_RIGHT_B", to: "ZONE_BLUE", distance_mm: 440, line_type: "SINE", bidirectional: true, turn_cost_class: "LIGHT" },
       { id: "E_DELIVERY_GREEN", from: "LOOP_RIGHT_G", to: "ZONE_GREEN", distance_mm: 440, line_type: "DASHED", bidirectional: true, turn_cost_class: "LIGHT" },
 
-      { id: "E_MAIN_ENTRY_RED", from: "J_RED", to: "ENTRY_RED", distance_mm: 180, line_type: "SOLID", bidirectional: true, turn_cost_class: "LIGHT" },
+      { id: "E_MAIN_ENTRY_RED", from: "J_MAIN", to: "ENTRY_RED", distance_mm: 180, line_type: "SOLID", bidirectional: true, turn_cost_class: "LIGHT" },
       { id: "E_MAIN_ENTRY_YELLOW", from: "J_YELLOW", to: "ENTRY_YELLOW", distance_mm: 180, line_type: "SOLID", bidirectional: true, turn_cost_class: "LIGHT" },
       { id: "E_MAIN_ENTRY_BLUE", from: "J_BLUE", to: "ENTRY_BLUE", distance_mm: 180, line_type: "SOLID", bidirectional: true, turn_cost_class: "LIGHT" },
       { id: "E_MAIN_ENTRY_GREEN", from: "J_GREEN", to: "ENTRY_GREEN", distance_mm: 180, line_type: "SOLID", bidirectional: true, turn_cost_class: "LIGHT" },

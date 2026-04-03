@@ -20,6 +20,7 @@ const COLORS = ["RED", "YELLOW", "BLUE", "GREEN"] as const;
 export interface Stm32TablesData {
   layouts: EnumeratedLayout[];
   planTable: GeneratedPlanDesc[];
+  planTableBusRoute: GeneratedPlanDesc[];
   planTableLiFo: GeneratedPlanDesc[];
   routeTable: Record<string, Record<string, GeneratedRouteEntry>>;
   importantNodes: readonly string[];
@@ -27,7 +28,11 @@ export interface Stm32TablesData {
 
 let cachedTablesData: Stm32TablesData | null = null;
 
-function computePlanTable(config: SimulationConfig, layouts: EnumeratedLayout[], mode: "normal" | "lifo"): GeneratedPlanDesc[] {
+function computePlanTable(
+  config: SimulationConfig,
+  layouts: EnumeratedLayout[],
+  mode: "normal" | "lifo" | "bus_route"
+): GeneratedPlanDesc[] {
   return layouts.map((layout) => buildPlanForLayout(config, layout, mode));
 }
 
@@ -42,11 +47,13 @@ export function buildStm32TablesData(): Stm32TablesData {
   const config = createDefaultPlanningConfig();
   const layouts = enumerateLegalLayouts();
   const planTable = computePlanTable(config, layouts, "normal");
+  const planTableBusRoute = computePlanTable(config, layouts, "bus_route");
   const planTableLiFo = computePlanTable(config, layouts, "lifo");
   const routeTable = computeRouteTable(config);
   cachedTablesData = {
     layouts,
     planTable,
+    planTableBusRoute,
     planTableLiFo,
     routeTable,
     importantNodes: IMPORTANT_NODES
@@ -180,6 +187,20 @@ extern const plan_desc_t g_plan_table_lifo[576];
 `;
 }
 
+function renderPlanBusRouteHeader(): string {
+  return `${renderHeaderBanner("src/generateStm32Tables.ts")}
+#ifndef GENERATED_PLAN_TABLE_BUS_ROUTE_H
+#define GENERATED_PLAN_TABLE_BUS_ROUTE_H
+
+#include <stdint.h>
+#include "generated_plan_table.h"
+
+extern const plan_desc_t g_plan_table_bus_route[576];
+
+#endif
+`;
+}
+
 function renderPlanLiFoSource(planTable: GeneratedPlanDesc[]): string {
   const plans = planTable
     .map((plan) => {
@@ -198,6 +219,29 @@ function renderPlanLiFoSource(planTable: GeneratedPlanDesc[]): string {
 #include "generated_plan_table_lifo.h"
 
 const plan_desc_t g_plan_table_lifo[576] = {
+${plans}
+};
+`;
+}
+
+function renderPlanBusRouteSource(planTable: GeneratedPlanDesc[]): string {
+  const plans = planTable
+    .map((plan) => {
+      const actionRows = Array.from({ length: MAX_PLAN_ACTIONS }, (_, index) => {
+        const action = plan.actions[index];
+        if (!action) {
+          return "{ ACT_END_ROUND, 0, 0 }";
+        }
+        return `{ ${action.type}, ${action.arg0}, ${action.arg1} }`;
+      }).join(", ");
+      return `    { .action_count = ${plan.action_count}, .actions = { ${actionRows} } }`;
+    })
+    .join(",\n");
+
+  return `${renderHeaderBanner("src/generateStm32Tables.ts")}
+#include "generated_plan_table_bus_route.h"
+
+const plan_desc_t g_plan_table_bus_route[576] = {
 ${plans}
 };
 `;
@@ -261,6 +305,8 @@ export function renderStm32Tables(data: Stm32TablesData): Record<string, string>
     "generated_layouts.c": renderLayoutsSource(data.layouts),
     "generated_plan_table.h": renderPlanHeader(),
     "generated_plan_table.c": renderPlanSource(data.planTable),
+    "generated_plan_table_bus_route.h": renderPlanBusRouteHeader(),
+    "generated_plan_table_bus_route.c": renderPlanBusRouteSource(data.planTableBusRoute),
     "generated_plan_table_lifo.h": renderPlanLiFoHeader(),
     "generated_plan_table_lifo.c": renderPlanLiFoSource(data.planTableLiFo),
     "generated_routes.h": renderRoutesHeader(),

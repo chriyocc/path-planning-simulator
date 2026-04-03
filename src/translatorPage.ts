@@ -6,10 +6,12 @@ import {
   type TutorialPlanMode,
   buildPlanForPlacement,
   buildTutorialExecution,
+  clampTutorialLayoutId,
   createDefaultTutorialPlacement,
   findLayoutIdForPlacement,
   formatLayoutMeaning,
   formatPlanRowMeaning,
+  getPlacementForLayoutId,
   parsePlanRowText,
   validatePlacementRows
 } from "./translator";
@@ -108,6 +110,13 @@ export function renderTranslatorPage(app: HTMLDivElement): void {
               <option value="lifo">LiFo g_plan_table_lifo</option>
             </select>
           </label>
+          <div class="translator-alt-input">
+            <h3>Use Layout ID Instead</h3>
+            <p class="translator-alt-copy">Layout ID is an alternative way to choose the exact same legal placement. Enter any legal id from <code>0</code> to <code>575</code> and the color grid will sync automatically.</p>
+            <label class="translator-inline-field">Layout ID
+              <input id="manualLayoutId" type="number" min="0" max="575" step="1" placeholder="0" />
+            </label>
+          </div>
           <div id="placementEditor" class="translator-placement-grid"></div>
           <p id="placementStatus" class="translator-status"></p>
           <div id="manualResult"></div>
@@ -131,6 +140,7 @@ export function renderTranslatorPage(app: HTMLDivElement): void {
   const placementStatus = document.getElementById("placementStatus") as HTMLParagraphElement;
   const manualResult = document.getElementById("manualResult") as HTMLDivElement;
   const manualPlanMode = document.getElementById("manualPlanMode") as HTMLSelectElement;
+  const manualLayoutIdInput = document.getElementById("manualLayoutId") as HTMLInputElement;
   const planRowInput = document.getElementById("planRowInput") as HTMLTextAreaElement;
   const translatePlanRowBtn = document.getElementById("translatePlanRow") as HTMLButtonElement;
   const planRowStatus = document.getElementById("planRowStatus") as HTMLParagraphElement;
@@ -174,9 +184,18 @@ export function renderTranslatorPage(app: HTMLDivElement): void {
     });
   }
 
+  function syncPlacementEditorFromState(): void {
+    placementEditor.querySelectorAll<HTMLSelectElement>("select").forEach((select) => {
+      const branch = select.dataset.branch as BranchId;
+      const slot = Number(select.dataset.slot) as 0 | 1;
+      select.value = placement[branch][slot];
+    });
+  }
+
   function updateManualPlacementResult(): void {
     const errors = validatePlacementRows(placement);
     if (errors.length > 0) {
+      manualLayoutIdInput.value = "";
       placementStatus.textContent = errors.join(" ");
       manualResult.innerHTML = "";
       return;
@@ -184,11 +203,13 @@ export function renderTranslatorPage(app: HTMLDivElement): void {
 
     const layoutId = findLayoutIdForPlacement(placement);
     if (layoutId === null) {
+      manualLayoutIdInput.value = "";
       placementStatus.textContent = "This placement is not a legal layout.";
       manualResult.innerHTML = "";
       return;
     }
 
+    manualLayoutIdInput.value = String(layoutId);
     const plan = buildPlanForPlacement(placement, selectedPlanMode);
     const steps = buildTutorialExecution(plan);
     placementStatus.textContent = `Matched legal layout ${layoutId}. This explanation is using ${selectedPlanMode === "lifo" ? "g_plan_table_lifo" : "g_plan_table"}.`;
@@ -221,6 +242,14 @@ export function renderTranslatorPage(app: HTMLDivElement): void {
       planRowStatus.textContent = error instanceof Error ? error.message : "Failed to parse the plan row.";
       pasteResult.innerHTML = "";
     }
+  };
+
+  manualLayoutIdInput.onchange = () => {
+    const layoutId = clampTutorialLayoutId(Number(manualLayoutIdInput.value));
+    manualLayoutIdInput.value = String(layoutId);
+    placement = getPlacementForLayoutId(layoutId);
+    syncPlacementEditorFromState();
+    updateManualPlacementResult();
   };
 
   manualPlanMode.onchange = () => {

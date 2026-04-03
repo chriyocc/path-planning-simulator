@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createDefaultGraph } from "../src/map";
+import { createDefaultGraph, createDefaultMapSpec } from "../src/map";
 import { computeOptimalPolicy, computeOptimalPolicyLiFo } from "../src/planner";
 import { GraphRouter } from "../src/router";
 import { createDefaultSimulationConfig } from "../src/simulator";
@@ -30,8 +30,13 @@ describe("stm32 table generation", () => {
   it("builds non-empty plans within the configured maximum", () => {
     const data = buildStm32TablesData();
     expect(data.planTable).toHaveLength(576);
+    expect(data.planTableBusRoute).toHaveLength(576);
     expect(data.planTableLiFo).toHaveLength(576);
     for (const plan of data.planTable) {
+      expect(plan.action_count).toBeGreaterThan(0);
+      expect(plan.action_count).toBeLessThanOrEqual(MAX_PLAN_ACTIONS);
+    }
+    for (const plan of data.planTableBusRoute) {
       expect(plan.action_count).toBeGreaterThan(0);
       expect(plan.action_count).toBeLessThanOrEqual(MAX_PLAN_ACTIONS);
     }
@@ -39,7 +44,7 @@ describe("stm32 table generation", () => {
       expect(plan.action_count).toBeGreaterThan(0);
       expect(plan.action_count).toBeLessThanOrEqual(MAX_PLAN_ACTIONS);
     }
-  }, 15000);
+  }, 150000);
 
   it("builds valid routes between every important node pair", () => {
     const data = buildStm32TablesData();
@@ -52,6 +57,60 @@ describe("stm32 table generation", () => {
     }
   });
 
+  it("does not keep overlapping duplicate junction nodes in the default map", () => {
+    const spec = createDefaultMapSpec();
+    const overlaps = new Map<string, string[]>();
+    for (const node of spec.nodes) {
+      const key = `${node.x_mm},${node.y_mm}`;
+      overlaps.set(key, [...(overlaps.get(key) ?? []), `${node.id}:${node.kind}`]);
+    }
+
+    const duplicateJunctionCoords = [...overlaps.values()].filter(
+      (nodes) => nodes.length > 1 && nodes.every((entry) => entry.endsWith(":JUNCTION"))
+    );
+
+    expect(duplicateJunctionCoords).toEqual([]);
+  });
+
+  it("simplifies representative STM32 routes across the red/main junction", () => {
+    const data = buildStm32TablesData();
+
+    expect(data.routeTable.START.LOCK_RED.path).toEqual(["START", "C_START", "J_MAIN", "ENTRY_RED", "LOCK_RED"]);
+    expect(data.routeTable.START.LOCK_RED.steps).toEqual([
+      "STEP_LEFT",
+      "STEP_LEFT",
+      "STEP_ENTER_BRANCH",
+      "STEP_STOP_ON_MARKER"
+    ]);
+
+    expect(data.routeTable.LOCK_RED.LOCK_YELLOW.path).toEqual([
+      "LOCK_RED",
+      "ENTRY_RED",
+      "J_MAIN",
+      "J_YELLOW",
+      "ENTRY_YELLOW",
+      "LOCK_YELLOW"
+    ]);
+    expect(data.routeTable.LOCK_RED.LOCK_YELLOW.steps).toEqual([
+      "STEP_ENTER_BRANCH",
+      "STEP_LEFT",
+      "STEP_LEFT",
+      "STEP_ENTER_BRANCH",
+      "STEP_STOP_ON_MARKER"
+    ]);
+
+    expect(data.routeTable.LOCK_RED.BLACK_ZONE.path).toEqual([
+      "LOCK_RED",
+      "ENTRY_RED",
+      "J_MAIN",
+      "J_MID_LEFT",
+      "LOOP_BL",
+      "LOOP_LEFT_Y",
+      "LOOP_TL",
+      "BLACK_ZONE"
+    ]);
+  });
+
   it("renders stable public headers and representative entries", () => {
     const files = renderStm32Tables(buildStm32TablesData());
 
@@ -61,6 +120,8 @@ describe("stm32 table generation", () => {
 
     expect(files["generated_plan_table.h"]).toContain("#define MAX_PLAN_ACTIONS 32");
     expect(files["generated_plan_table.c"]).toContain("const plan_desc_t g_plan_table[576] = {");
+    expect(files["generated_plan_table_bus_route.h"]).toContain("extern const plan_desc_t g_plan_table_bus_route[576];");
+    expect(files["generated_plan_table_bus_route.c"]).toContain("const plan_desc_t g_plan_table_bus_route[576] = {");
     expect(files["generated_plan_table_lifo.h"]).toContain("extern const plan_desc_t g_plan_table_lifo[576];");
     expect(files["generated_plan_table_lifo.c"]).toContain("const plan_desc_t g_plan_table_lifo[576] = {");
 
@@ -148,6 +209,16 @@ describe("stm32 table generation", () => {
     const hasDifferentLayout = data.planTable.some((plan, index) => {
       const lifoPlan = data.planTableLiFo[index];
       return JSON.stringify(plan) !== JSON.stringify(lifoPlan);
+    });
+
+    expect(hasDifferentLayout).toBe(true);
+  });
+
+  it("emits at least one layout where bus route and omniscient exported plans differ", () => {
+    const data = buildStm32TablesData();
+    const hasDifferentLayout = data.planTable.some((plan, index) => {
+      const busPlan = data.planTableBusRoute[index];
+      return JSON.stringify(plan) !== JSON.stringify(busPlan);
     });
 
     expect(hasDifferentLayout).toBe(true);

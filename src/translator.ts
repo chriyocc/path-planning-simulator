@@ -4,6 +4,7 @@ import {
   createDefaultPlanningConfig,
   enumerateLegalLayouts
 } from "./stm32Shared";
+import { getLayoutById } from "./layouts";
 import type { BranchId, ResourceColor } from "./types";
 
 type TutorialColor = Exclude<ResourceColor, "BLACK">;
@@ -49,6 +50,7 @@ export const SLOT_ID_LABELS = ["first slot", "second slot"] as const;
 const BRANCHES: BranchId[] = ["RED", "YELLOW", "BLUE", "GREEN"];
 const COLORS: TutorialColor[] = ["RED", "YELLOW", "BLUE", "GREEN"];
 const ROUTE_TABLE = buildRouteTable(createDefaultPlanningConfig());
+const MAX_TUTORIAL_LAYOUT_ID = 575;
 
 export function createDefaultTutorialPlacement(): TutorialPlacement {
   return {
@@ -77,6 +79,20 @@ export function findLayoutIdForPlacement(placement: TutorialPlacement): number |
   const target = JSON.stringify(placement);
   const match = enumerateLegalLayouts().find((layout) => JSON.stringify(layout.slots) === target);
   return match?.id ?? null;
+}
+
+export function clampTutorialLayoutId(value: number): number {
+  return Math.max(0, Math.min(MAX_TUTORIAL_LAYOUT_ID, Number.isFinite(value) ? Math.floor(value) : 0));
+}
+
+export function getPlacementForLayoutId(layoutId: number): TutorialPlacement {
+  const layout = getLayoutById(clampTutorialLayoutId(layoutId));
+  return {
+    RED: [...layout.slots.RED],
+    YELLOW: [...layout.slots.YELLOW],
+    BLUE: [...layout.slots.BLUE],
+    GREEN: [...layout.slots.GREEN]
+  };
 }
 
 export function buildPlanForPlacement(placement: TutorialPlacement, mode: TutorialPlanMode = "normal"): ParsedPlanRow {

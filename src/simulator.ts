@@ -3,7 +3,12 @@ import type {
   BranchId,
   Graph,
   Observation,
+  PolicyKnownSlots,
   PolicyOverrides,
+  PolicyRevealEvent,
+  PolicySnapshotEntry,
+  PolicyStatusSnapshot,
+  PolicyTraceEvent,
   RoundState,
   SimulationConfig,
   SimulationResult,
@@ -98,6 +103,85 @@ function addTrace(
   });
 }
 
+function cloneKnownSlots(knownSlots: PolicyKnownSlots | null): PolicyKnownSlots | null {
+  if (!knownSlots) return null;
+  return {
+    RED: [...knownSlots.RED] as PolicyKnownSlots["RED"],
+    YELLOW: [...knownSlots.YELLOW] as PolicyKnownSlots["YELLOW"],
+    BLUE: [...knownSlots.BLUE] as PolicyKnownSlots["BLUE"],
+    GREEN: [...knownSlots.GREEN] as PolicyKnownSlots["GREEN"]
+  };
+}
+
+function clonePolicyStatusSnapshot(snapshot: PolicyStatusSnapshot): PolicyStatusSnapshot {
+  return {
+    ...snapshot,
+    policy_notes: [...snapshot.policy_notes],
+    known_slots: cloneKnownSlots(snapshot.known_slots)
+  };
+}
+
+function describeAction(action: Action): string {
+  if (action.type === "PICK_LOCK") return `Pick ${action.branchId} black lock`;
+  if (action.type === "DROP_LOCK") return `Drop ${action.branchId ?? "held"} black lock`;
+  if (action.type === "PICK_RESOURCE") return `Pick ${action.slotNodeId ?? "resource"}`;
+  if (action.type === "DROP_RESOURCE") return `Drop ${action.color ?? "resource"}`;
+  if (action.type === "RETURN_START") return "Return to START";
+  if (action.type === "MOVE_TO") return `Move to ${action.targetNodeId ?? "target"}`;
+  return "End round";
+}
+
+function holdingSummary(state: RoundState): string {
+  const locks = state.holding_locks_for_branches.length > 0
+    ? state.holding_locks_for_branches.join(", ")
+    : "none";
+  const resources = state.inventory.length > 0
+    ? state.inventory.map((item) => `${item.color}:${item.sourceBranch}`).join(", ")
+    : "none";
+  return `locks=[${locks}] resources=[${resources}]`;
+}
+
+function genericPolicySnapshot(
+  action: Action,
+  state: RoundState,
+  notes: string[] = []
+): PolicyStatusSnapshot {
+  return {
+    current_step: describeAction(action),
+    next_step: "Re-evaluate after current step",
+    holding: holdingSummary(state),
+    knowledge_summary: "knowledge: not used by this policy",
+    candidate_count: null,
+    layout_locked: false,
+    policy_notes: notes,
+    known_slots: null
+  };
+}
+
+function revealEventsForTraceStep(state: RoundState, action: Action, note?: string): PolicyRevealEvent[] {
+  if (note === "lock_gripped" && action.branchId) {
+    return [
+      {
+        branchId: action.branchId,
+        slotIndex: 0,
+        color: state.branch_to_resources[action.branchId][0] as Exclude<typeof state.branch_to_resources[typeof action.branchId][0], "BLACK">
+      }
+    ];
+  }
+  if (note?.startsWith("picked_") && action.branchId && action.slotNodeId) {
+    if (action.slotNodeId.endsWith("_1")) {
+      return [
+        {
+          branchId: action.branchId,
+          slotIndex: 1,
+          color: state.branch_to_resources[action.branchId][1] as Exclude<typeof state.branch_to_resources[typeof action.branchId][1], "BLACK">
+        }
+      ];
+    }
+  }
+  return [];
+}
+
 function applyTimeout(state: RoundState, config: SimulationConfig): boolean {
   if (state.time_elapsed_s > config.timeout_s) {
     state.time_elapsed_s = config.timeout_s;
@@ -181,8 +265,31 @@ function simulateRoundFromState(
 ): SimulationResult {
   const router = new GraphRouter(config.map, config.robot);
   const trace: TraceStep[] = [];
+  const policy_snapshots: PolicySnapshotEntry[] = [];
   const legality_violations: string[] = [];
   const resourceDropOrder = overrides?.resource_drop_order ?? "auto";
+
+  function captureDecisionSnapshot(action: Action): PolicyStatusSnapshot {
+    if (policy.decide) {
+      return genericPolicySnapshot(action, state);
+    }
+    return genericPolicySnapshot(action, state);
+  }
+
+  function recordTraceSnapshot(action: Action, note: string | undefined, decisionSnapshot: PolicyStatusSnapshot): void {
+    const event: PolicyTraceEvent = {
+      action,
+      note,
+      reveals: revealEventsForTraceStep(state, action, note)
+    };
+    const postStep = policy.onTraceStep
+      ? policy.onTraceStep(state, event, config)
+      : genericPolicySnapshot(action, state, note ? [note] : []);
+    policy_snapshots.push({
+      decision: clonePolicyStatusSnapshot(decisionSnapshot),
+      post_step: clonePolicyStatusSnapshot(postStep)
+    });
+  }
 
   const maxSteps = 500;
   for (let steps = 0; steps < maxSteps && !state.completed; steps += 1) {
@@ -192,17 +299,26 @@ function simulateRoundFromState(
     }
 
     const observation = observationOf(state, config.timeout_s);
-    const action = policy.nextAction(state, observation, config);
+    const decision = policy.decide
+      ? policy.decide(state, observation, config)
+      : { action: policy.nextAction(state, observation, config), snapshot: undefined };
+    const action = decision.action;
+    const decisionSnapshot = clonePolicyStatusSnapshot(decision.snapshot ?? captureDecisionSnapshot(action));
     const fromNode = state.current_node;
 
     if (action.type === "END_ROUND") {
       state.completed = true;
       addTrace(trace, action, fromNode, state.current_node, [state.current_node], 0, state, "policy_end");
+      recordTraceSnapshot(action, "policy_end", decisionSnapshot);
       break;
     }
 
     if (action.type === "RETURN_START") {
-      if (moveTo(state, config.map.startNodeId, router, config, trace, action)) break;
+      const timedOut = moveTo(state, config.map.startNodeId, router, config, trace, action);
+      if (trace.length > policy_snapshots.length) {
+        recordTraceSnapshot(action, trace.at(-1)?.note, decisionSnapshot);
+      }
+      if (timedOut) break;
       checkFullCompletion(state, config);
       continue;
     }
@@ -211,9 +327,14 @@ function simulateRoundFromState(
       if (!action.targetNodeId || !config.map.nodes[action.targetNodeId]) {
         legality_violations.push("MOVE_TO without valid targetNodeId");
         addTrace(trace, action, fromNode, fromNode, [fromNode], 0, state, "invalid_move_target");
+        recordTraceSnapshot(action, "invalid_move_target", decisionSnapshot);
         continue;
       }
-      if (moveTo(state, action.targetNodeId, router, config, trace, action)) break;
+      const timedOut = moveTo(state, action.targetNodeId, router, config, trace, action);
+      if (trace.length > policy_snapshots.length) {
+        recordTraceSnapshot(action, trace.at(-1)?.note, decisionSnapshot);
+      }
+      if (timedOut) break;
       checkFullCompletion(state, config);
       continue;
     }
@@ -225,7 +346,11 @@ function simulateRoundFromState(
         continue;
       }
       const branch = config.map.branches[branchId];
-      if (moveTo(state, branch.lock_node, router, config, trace, action)) break;
+      const timedOut = moveTo(state, branch.lock_node, router, config, trace, action);
+      if (trace.length > policy_snapshots.length) {
+        recordTraceSnapshot(action, trace.at(-1)?.note, decisionSnapshot);
+      }
+      if (timedOut) break;
       if (state.locks_cleared[branchId]) {
         legality_violations.push(`PICK_LOCK attempted on cleared branch ${branchId}`);
         continue;
@@ -247,13 +372,18 @@ function simulateRoundFromState(
       state.score += config.lock_points.grip;
       if (applyTimeout(state, config)) break;
       addTrace(trace, action, branch.lock_node, branch.lock_node, [branch.lock_node], config.robot.pickup_s, state, "lock_gripped");
+      recordTraceSnapshot(action, "lock_gripped", decisionSnapshot);
       continue;
     }
 
     if (action.type === "DROP_LOCK") {
       const branchId = action.branchId ?? state.holding_locks_for_branches[0];
       const blackZone = nearestBlackZone(router, state.current_node, config.map.blackZoneIds);
-      if (moveTo(state, blackZone, router, config, trace, action)) break;
+      const timedOut = moveTo(state, blackZone, router, config, trace, action);
+      if (trace.length > policy_snapshots.length) {
+        recordTraceSnapshot(action, trace.at(-1)?.note, decisionSnapshot);
+      }
+      if (timedOut) break;
       if (!branchId) {
         legality_violations.push("DROP_LOCK attempted without held lock");
         continue;
@@ -271,6 +401,7 @@ function simulateRoundFromState(
       state.score += config.lock_points.place;
       if (applyTimeout(state, config)) break;
       addTrace(trace, action, blackZone, blackZone, [blackZone], config.robot.drop_s, state, "lock_deposited");
+      recordTraceSnapshot(action, "lock_deposited", decisionSnapshot);
       continue;
     }
 
@@ -280,7 +411,11 @@ function simulateRoundFromState(
         legality_violations.push("PICK_RESOURCE missing slotNodeId");
         continue;
       }
-      if (moveTo(state, slotNodeId, router, config, trace, action)) break;
+      const timedOut = moveTo(state, slotNodeId, router, config, trace, action);
+      if (trace.length > policy_snapshots.length) {
+        recordTraceSnapshot(action, trace.at(-1)?.note, decisionSnapshot);
+      }
+      if (timedOut) break;
       const branchId = branchFromSlotNode(config.map, slotNodeId);
       if (!branchId) {
         legality_violations.push(`PICK_RESOURCE invalid slot ${slotNodeId}`);
@@ -328,6 +463,7 @@ function simulateRoundFromState(
       state.time_elapsed_s += config.robot.pickup_s;
       if (applyTimeout(state, config)) break;
       addTrace(trace, action, slotNodeId, slotNodeId, [slotNodeId], config.robot.pickup_s, state, `picked_${color}`);
+      recordTraceSnapshot(action, `picked_${color}`, decisionSnapshot);
       continue;
     }
 
@@ -338,7 +474,11 @@ function simulateRoundFromState(
         continue;
       }
       const zone = config.map.colorZoneNodeIds[color];
-      if (moveTo(state, zone, router, config, trace, action)) break;
+      const timedOut = moveTo(state, zone, router, config, trace, action);
+      if (trace.length > policy_snapshots.length) {
+        recordTraceSnapshot(action, trace.at(-1)?.note, decisionSnapshot);
+      }
+      if (timedOut) break;
       const idx = inventoryDropIndex(state, color, resourceDropOrder);
       if (idx < 0) {
         legality_violations.push(`DROP_RESOURCE color not in inventory ${color}`);
@@ -351,6 +491,7 @@ function simulateRoundFromState(
       state.time_elapsed_s += config.robot.drop_s;
       if (applyTimeout(state, config)) break;
       addTrace(trace, action, zone, zone, [zone], config.robot.drop_s, state, `dropped_${color}`);
+      recordTraceSnapshot(action, `dropped_${color}`, decisionSnapshot);
       checkFullCompletion(state, config);
       continue;
     }
@@ -366,6 +507,7 @@ function simulateRoundFromState(
     layout_id,
     state,
     trace,
+    policy_snapshots,
     legality_violations,
     policy_name: policy.name
   };
