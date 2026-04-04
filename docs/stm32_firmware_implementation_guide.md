@@ -926,6 +926,14 @@ The main difference is:
 - omniscient mode reads one precomputed action from `g_plan_table`
 - bus mode computes the next action onboard from the current logical state
 
+One important alignment detail from the simulator bus policy is:
+
+- after an immediate color drop
+- if exactly one colored resource remains
+- and finishing that remaining drop is still cheap
+
+the bus policy should finish that remaining cargo before reopening new lock work.
+
 ### 10.7.2 Recommended firmware runtime state for bus mode
 
 The bus policy needs slightly richer runtime bookkeeping than a fixed plan executor because it decides online.
@@ -969,16 +977,17 @@ A practical STM32 implementation should keep the decision ladder simple and dete
 Recommended decision order:
 
 1. If already standing on a valid color zone for carried cargo, drop that color immediately.
-2. If holding black locks and currently at a black zone, keep dropping until no held locks remain.
-3. If holding one black lock, no resources, and spare capacity remains, consider taking a second lock before visiting black zone.
-4. If holding black locks and no useful extra lock chain exists, go to the nearest black zone and drop.
-5. If inventory is full, choose the best color drop by value-per-time.
-6. Otherwise compare:
+2. If that immediate drop leaves exactly one cheap remaining carried color, finish that drop before reopening work.
+3. If holding black locks and currently at a black zone, keep dropping until no held locks remain.
+4. If holding one black lock, no resources, and spare capacity remains, consider taking a second lock before visiting black zone.
+5. If holding black locks and no useful extra lock chain exists, go to the nearest black zone and drop.
+6. If inventory is full, choose the best color drop by value-per-time.
+7. Otherwise compare:
    - next lock pickup candidate
    - next resource pickup candidate
    - next color drop candidate
-7. Choose the highest-scoring legal action.
-8. When all resources are scored and nothing is carried, return to start.
+8. Choose the highest-scoring legal action.
+9. When all resources are scored and nothing is carried, return to start.
 
 This is intentionally simpler than copying every TypeScript helper exactly.
 
@@ -1001,6 +1010,11 @@ static uint8_t BusPolicy_DecideNextAction(const match_state_t *state,
     slot_ref_t best_slot;
 
     if (BusPolicy_TryImmediateColorDrop(state, out_action) != 0U)
+    {
+        return 1U;
+    }
+
+    if (BusPolicy_TryFinishCheapRemainingColor(state, out_action) != 0U)
     {
         return 1U;
     }

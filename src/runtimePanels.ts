@@ -1,4 +1,4 @@
-import type { BatchSourceMode, BranchId, PolicyStatusSnapshot, ResourceColor, SimulationResult } from "./types";
+import type { BatchResult, BatchSourceMode, BranchId, PolicyStatusSnapshot, ResourceColor, SimulationResult } from "./types";
 
 export interface RuntimePanelVisualState {
   inventory: Array<{ color: ResourceColor; sourceBranch?: BranchId }>;
@@ -19,6 +19,32 @@ export interface SingleSourceComparisonEntry {
   time_s: number;
   completed: boolean;
   violations: number;
+}
+
+export function compareBatchResults(a: BatchResult, b: BatchResult): number {
+  return (
+    a.violations_count - b.violations_count ||
+    b.completion_rate - a.completion_rate ||
+    b.mean_score - a.mean_score ||
+    a.p90_time_s - b.p90_time_s ||
+    a.mean_time_s - b.mean_time_s ||
+    a.p50_time_s - b.p50_time_s ||
+    a.policy_name.localeCompare(b.policy_name)
+  );
+}
+
+export function formatBatchRankingPanel(entries: BatchResult[]): string {
+  if (entries.length === 0) {
+    return "(run batch to view ranking)";
+  }
+
+  return [...entries]
+    .sort(compareBatchResults)
+    .map(
+      (r, i) =>
+        `${i + 1}. ${r.policy_name}\n  source=${r.batch_source}\n  runs=${r.runs}\n  mean_score=${r.mean_score}\n  completion=${r.completion_rate}%\n  mean_time=${r.mean_time_s}s p50=${r.p50_time_s}s p90=${r.p90_time_s}s\n  violations=${r.violations_count}`
+    )
+    .join("\n\n");
 }
 
 export function formatPolicyStatusPanel(

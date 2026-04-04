@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   BaselineSingleCarryPolicy,
+  BusRevealedAfterPickupDeductivePolicy,
+  BusRevealedAfterPickupPolicy,
   BusRouteParametricPolicy,
   FixedRouteCapacity2Policy,
   InferenceExpectedValuePolicy,
+  InferenceBusHybridPolicy,
   ValueAwareDeadlinePolicy,
   OptimalOmniscientPolicy,
+  ALL_POLICIES,
   withPolicyOverrides
 } from "../src/policies";
 import { createDefaultGraph } from "../src/map";
@@ -52,6 +56,26 @@ function observationAtRedZone(cfg: ReturnType<typeof config>): Observation {
     locked_branches: ["YELLOW", "BLUE", "GREEN"],
     inventory_count: 2,
     all_resources_delivered: false
+  };
+}
+
+function postDropState(currentNode: string, remainingColor: "RED" | "YELLOW" | "BLUE" | "GREEN", sourceBranch: "RED" | "YELLOW" | "BLUE" | "GREEN" = remainingColor): RoundState {
+  return {
+    current_node: currentNode,
+    branch_to_resources: randomizeRound(1).branch_to_resources,
+    locks_cleared: { RED: false, YELLOW: false, BLUE: false, GREEN: false },
+    picked_slots: {},
+    inventory: [{ color: remainingColor, sourceBranch }],
+    holding_locks_for_branches: [],
+    holding_lock_for_branch: null,
+    placed_locks: [],
+    placed_resources: [{ color: currentNode.replace("ZONE_", "") as "RED" | "YELLOW" | "BLUE" | "GREEN", sourceBranch: "GREEN" }],
+    score: 0,
+    time_elapsed_s: 1,
+    started_navigation: true,
+    reached_main_junction: true,
+    completed: false,
+    returned_to_start: false
   };
 }
 
@@ -174,6 +198,32 @@ describe("legality", () => {
 
     const action = BusRouteParametricPolicy.nextAction(roundState, observation, cfg);
     expect(action).toEqual({ type: "DROP_RESOURCE", color: "RED" });
+  });
+
+  it("bus route finishes a cheap remaining carried color after a just-completed drop", () => {
+    const cfg = config();
+    const state = postDropState("ZONE_GREEN", "BLUE");
+    BusRouteParametricPolicy.onTraceStep?.(state, {
+      action: { type: "DROP_RESOURCE", color: "GREEN" },
+      note: "dropped_GREEN",
+      reveals: []
+    }, cfg);
+
+    const action = BusRouteParametricPolicy.nextAction(state, observationAtRedZone(cfg), cfg);
+    expect(action).toEqual({ type: "DROP_RESOURCE", color: "BLUE" });
+  });
+
+  it("bus route may still open a new lock when the post-drop remaining color is not cheap to finish", () => {
+    const cfg = config();
+    const state = postDropState("ZONE_YELLOW", "GREEN");
+    BusRouteParametricPolicy.onTraceStep?.(state, {
+      action: { type: "DROP_RESOURCE", color: "YELLOW" },
+      note: "dropped_YELLOW",
+      reveals: []
+    }, cfg);
+
+    const action = BusRouteParametricPolicy.nextAction(state, observationAtRedZone(cfg), cfg);
+    expect(action.type).toBe("PICK_LOCK");
   });
 
   it("baseline single carry drops immediately when already at the matching zone", () => {
@@ -709,5 +759,189 @@ describe("inference policy and recorded snapshots", () => {
     expect(inference.violations_count).toBe(0);
     expect(inference.mean_time_s).toBeLessThanOrEqual(223.82);
     expect(inference.mean_time_s).toBeLessThanOrEqual(bus.mean_time_s + 10);
+  });
+});
+
+describe("post-pickup hidden-layout policies", () => {
+  it("registers the new phased hidden-layout policies", () => {
+    expect(ALL_POLICIES.map((policy) => policy.name)).toEqual(
+      expect.arrayContaining([
+        "Bus_RevealedAfterPickup",
+        "Bus_RevealedAfterPickup_Deductive",
+        "Inference_BusHybrid"
+      ])
+    );
+  });
+
+  it("observed-only bus reveals only the picked slot and keeps candidate count disabled", () => {
+    const result = simulateRoundForLayout(config(), BusRevealedAfterPickupPolicy, 0);
+    const firstPickIdx = result.trace.findIndex((step) => step.note?.startsWith("picked_"));
+
+    expect(firstPickIdx).toBeGreaterThanOrEqual(0);
+    const pickedStep = result.trace[firstPickIdx];
+    const branchId = pickedStep.action.branchId!;
+    const slotNodeId = pickedStep.action.slotNodeId!;
+    const slotIndex = slotNodeId.endsWith("_1") ? 0 : 1;
+    const colors = result.state.branch_to_resources[branchId];
+    const expectedKnown = slotIndex === 0
+      ? `${branchId}: ${colors[0]}, ?`
+      : `${branchId}: ?, ${colors[1]}`;
+
+    expect(result.policy_snapshots[firstPickIdx].decision.knowledge_summary).not.toContain(expectedKnown);
+    expect(result.policy_snapshots[firstPickIdx].post_step.knowledge_summary).toContain(expectedKnown);
+    expect(result.policy_snapshots[firstPickIdx].post_step.candidate_count).toBeNull();
+  });
+
+  it("observed-only bus flushes all held locks before leaving the black zone", () => {
+    const cfg = config();
+    cfg.robot.carry_capacity = 2;
+    const result = simulateRoundForLayout(cfg, BusRevealedAfterPickupPolicy, 0);
+    const firstDropIndex = result.trace.findIndex((step) => step.note === "lock_deposited");
+    const depositsAtZoneBeforeLeaving: typeof result.trace = [];
+    for (let i = firstDropIndex; i < result.trace.length; i += 1) {
+      const step = result.trace[i];
+      if (step.toNode !== "BLACK_ZONE" && step.toNode !== "BLACK_ZONE_RIGHT") {
+        break;
+      }
+      if (step.note === "lock_deposited") {
+        depositsAtZoneBeforeLeaving.push(step);
+      }
+    }
+
+    expect(firstDropIndex).toBeGreaterThanOrEqual(0);
+    expect(depositsAtZoneBeforeLeaving).toHaveLength(2);
+  });
+
+  it("observed-only bus finishes a cheap remaining carried color after a just-completed drop", () => {
+    const cfg = config();
+    const state = postDropState("ZONE_GREEN", "BLUE");
+    BusRevealedAfterPickupPolicy.onTraceStep?.(state, {
+      action: { type: "DROP_RESOURCE", color: "GREEN" },
+      note: "dropped_GREEN",
+      reveals: []
+    }, cfg);
+    const action = BusRevealedAfterPickupPolicy.nextAction(state, observationAtRedZone(cfg), cfg);
+
+    expect(action).toEqual({ type: "DROP_RESOURCE", color: "BLUE" });
+  });
+
+  it("observed-only bus may still open a new lock when the post-drop remaining color is not cheap to finish", () => {
+    const cfg = config();
+    const state = postDropState("ZONE_YELLOW", "GREEN");
+    BusRevealedAfterPickupPolicy.onTraceStep?.(state, {
+      action: { type: "DROP_RESOURCE", color: "YELLOW" },
+      note: "dropped_YELLOW",
+      reveals: []
+    }, cfg);
+    const action = BusRevealedAfterPickupPolicy.nextAction(state, observationAtRedZone(cfg), cfg);
+
+    expect(action.type).toBe("PICK_LOCK");
+  });
+
+  it("deductive bus shrinks candidates from picked-slot observations and only fills unanimous unseen colors", () => {
+    const result = simulateRoundForLayout(config(), BusRevealedAfterPickupDeductivePolicy, 165);
+    const firstPickIdx = result.trace.findIndex((step) => step.note?.startsWith("picked_"));
+    const reducedStep = result.policy_snapshots.find((entry) => (entry.post_step.candidate_count ?? 576) < 576);
+
+    expect(firstPickIdx).toBeGreaterThanOrEqual(0);
+    expect(reducedStep?.post_step.candidate_count).toBeLessThan(576);
+    expect(reducedStep?.post_step.known_slots?.RED[1]).toBe("UNKNOWN");
+
+    const lockedDecision = result.policy_snapshots.find(
+      (entry) => entry.decision.layout_locked && entry.decision.candidate_count === 1
+    )?.decision;
+    expect(lockedDecision?.known_slots?.RED).toEqual(["YELLOW", "GREEN"]);
+  });
+
+  it("deductive bus finishes a cheap remaining carried color after a just-completed drop", () => {
+    const cfg = config();
+    const state = postDropState("ZONE_GREEN", "BLUE");
+    BusRevealedAfterPickupDeductivePolicy.onTraceStep?.(state, {
+      action: { type: "DROP_RESOURCE", color: "GREEN" },
+      note: "dropped_GREEN",
+      reveals: []
+    }, cfg);
+    const action = BusRevealedAfterPickupDeductivePolicy.nextAction(state, observationAtRedZone(cfg), cfg);
+
+    expect(action).toEqual({ type: "DROP_RESOURCE", color: "BLUE" });
+  });
+
+  it("deductive bus may still open a new lock when the post-drop remaining color is not cheap to finish", () => {
+    const cfg = config();
+    const state = postDropState("ZONE_YELLOW", "GREEN");
+    BusRevealedAfterPickupDeductivePolicy.onTraceStep?.(state, {
+      action: { type: "DROP_RESOURCE", color: "YELLOW" },
+      note: "dropped_YELLOW",
+      reveals: []
+    }, cfg);
+    const action = BusRevealedAfterPickupDeductivePolicy.nextAction(state, observationAtRedZone(cfg), cfg);
+
+    expect(action.type).toBe("PICK_LOCK");
+  });
+
+  it("deductive bus flushes all held locks before leaving the black zone", () => {
+    const cfg = config();
+    cfg.robot.carry_capacity = 2;
+    const result = simulateRoundForLayout(cfg, BusRevealedAfterPickupDeductivePolicy, 0);
+    const firstDropIndex = result.trace.findIndex((step) => step.note === "lock_deposited");
+    const depositsAtZoneBeforeLeaving: typeof result.trace = [];
+    for (let i = firstDropIndex; i < result.trace.length; i += 1) {
+      const step = result.trace[i];
+      if (step.toNode !== "BLACK_ZONE" && step.toNode !== "BLACK_ZONE_RIGHT") {
+        break;
+      }
+      if (step.note === "lock_deposited") {
+        depositsAtZoneBeforeLeaving.push(step);
+      }
+    }
+
+    expect(firstDropIndex).toBeGreaterThanOrEqual(0);
+    expect(depositsAtZoneBeforeLeaving).toHaveLength(2);
+  });
+
+  it("hybrid obeys post-pickup-only sensing instead of revealing on lock grip", () => {
+    const result = simulateRoundForLayout(config(), InferenceBusHybridPolicy, 0);
+    const firstLockIdx = result.trace.findIndex((step) => step.note === "lock_gripped");
+    const firstPickIdx = result.trace.findIndex((step) => step.note?.startsWith("picked_"));
+
+    expect(firstLockIdx).toBeGreaterThanOrEqual(0);
+    expect(firstPickIdx).toBeGreaterThan(firstLockIdx);
+    expect(result.policy_snapshots[firstLockIdx].post_step.knowledge_summary).toContain("RED: ?, ?");
+    expect(result.policy_snapshots[firstPickIdx].post_step.knowledge_summary).not.toEqual(
+      result.policy_snapshots[firstLockIdx].post_step.knowledge_summary
+    );
+  });
+
+  it("hybrid prefers dropping a cheap remaining carried color after a just-completed drop", () => {
+    const cfg = config();
+    const state = postDropState("ZONE_GREEN", "BLUE");
+    InferenceBusHybridPolicy.onTraceStep?.(state, {
+      action: { type: "DROP_RESOURCE", color: "GREEN" },
+      note: "dropped_GREEN",
+      reveals: []
+    }, cfg);
+    const action = InferenceBusHybridPolicy.nextAction(state, observationAtRedZone(cfg), cfg);
+
+    expect(action).toEqual({ type: "DROP_RESOURCE", color: "BLUE" });
+  });
+
+  it("hybrid remains competitive with observed-only bus across representative layouts without lowering score", () => {
+    const cfg = config();
+    let baselineScore = 0;
+    let hybridScore = 0;
+    let baselineTime = 0;
+    let hybridTime = 0;
+    for (const layoutId of [0, 165]) {
+      const baseline = simulateRoundForLayout(cfg, BusRevealedAfterPickupPolicy, layoutId);
+      const hybrid = simulateRoundForLayout(cfg, InferenceBusHybridPolicy, layoutId);
+
+      expect(hybrid.legality_violations).toHaveLength(0);
+      baselineScore += baseline.state.score;
+      hybridScore += hybrid.state.score;
+      baselineTime += baseline.state.time_elapsed_s;
+      hybridTime += hybrid.state.time_elapsed_s;
+    }
+    expect(hybridScore).toBeGreaterThanOrEqual(baselineScore);
+    expect(hybridTime).toBeLessThanOrEqual(baselineTime + 20);
   });
 });

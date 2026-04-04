@@ -1,5 +1,6 @@
 import "./styles.css";
 import { appPageHref, resolveAppPage } from "./appRoutes";
+import { clampLayoutId, resolveSingleSourceComparisonContext } from "./comparisonContext";
 import {
   ALL_POLICIES,
   AdaptiveSafePolicy,
@@ -39,6 +40,7 @@ import type {
   TraceStep
 } from "./types";
 import {
+  formatBatchRankingPanel,
   formatPolicyStatusPanel,
   formatRandomizationPanel,
   formatSingleSourceComparisonPanel,
@@ -176,8 +178,9 @@ const SECTION_INFO: Record<string, SectionInfo> = {
     title: "Policy Ranking",
     body: [
       "Batch ranking runs all policies over the same source set and compares their aggregated results.",
-      "Mean score is the primary success indicator. Completion shows how often a policy finished all required deliveries.",
-      "Mean, p50, and p90 time show typical and slower-case completion behavior. Violations count tells you whether a policy tends to drift into illegal or unrecoverable situations."
+      "Policies are ranked by legality first, then completion, score, slow-tail consistency (p90), and finally average speed.",
+      "Mean, p50, and p90 time show typical and slower-case completion behavior. A lower p90 means the policy is less sensitive to difficult layouts.",
+      "Violations count tells you whether a policy tends to drift into illegal or unrecoverable situations, and illegal policies are ranked below legal ones."
     ]
   },
   "game-strategy": {
@@ -281,6 +284,72 @@ const POLICY_INFO: Record<string, PolicyInfo> = {
       "More heuristic complexity means behavior is less obvious at a glance.",
       "Still not globally optimal because it only evaluates local tradeoffs.",
       "Can be sensitive to geometry edits that change travel ratios."
+    ]
+  },
+  Bus_RevealedAfterPickup: {
+    label: "Bus Revealed After Pickup",
+    summary: "A realistic bus-style heuristic that only learns a slot's color after that exact resource has been picked.",
+    whyUseIt: "Use this as the honest hidden-layout baseline for the new two-sensor robot model.",
+    decisionFlow: [
+      "If the robot holds a lock, optionally chain one more lock when it clearly saves a black-zone trip, then deposit held locks.",
+      "If the robot is already on a matching color zone, unload immediately before moving away.",
+      "Keep unlocking branches using the same bus-style batching logic as the reference bus policy.",
+      "Choose resource pickups using travel cost, branch value, slot order, and cargo state only; do not assume unseen colors.",
+      "When cargo is full or no useful pickup remains, convert the known carried resources."
+    ],
+    strengths: [
+      "Matches the real post-pickup sensing model closely.",
+      "Keeps the movement logic simple and firmware-friendly.",
+      "Good baseline for measuring how much deduction actually helps."
+    ],
+    watchouts: [
+      "Gives up all pre-pick color-aware scoring on unseen resources.",
+      "Can be strategically blind even when the legal layout space already narrows strongly.",
+      "Best used as a realism baseline, not as the likely final best policy."
+    ]
+  },
+  Bus_RevealedAfterPickup_Deductive: {
+    label: "Bus Revealed After Pickup Deductive",
+    summary: "A bus-style hidden-layout policy that still senses colors only after pickup, then narrows legal layouts and uses unanimous deductions.",
+    whyUseIt: "Use this when you want a realistic robot policy that keeps bus efficiency while extracting more value from observed pickups.",
+    decisionFlow: [
+      "Follow the same lock batching and black-zone flushing behavior as the observed-only post-pickup bus.",
+      "Record colors only when a slot is actually picked.",
+      "Filter the legal layout set using those observed slot colors.",
+      "Use unanimous candidate agreement to treat some unseen slots as known for future routing decisions.",
+      "Keep the overall route heuristic bus-like instead of handing off to a full planner."
+    ],
+    strengths: [
+      "Much more realistic than the original bus policy.",
+      "Stronger than observed-only bus when candidate collapse is informative.",
+      "Still simpler and more deployable than the heavier inference policy."
+    ],
+    watchouts: [
+      "Deduction quality depends on the legal-layout model being trustworthy.",
+      "Still heuristic and not globally optimal.",
+      "Can be harder to explain than the observed-only baseline."
+    ]
+  },
+  Inference_BusHybrid: {
+    label: "Inference Bus Hybrid",
+    summary: "A post-pickup hidden-layout policy that keeps bus-style movement efficiency but adds bounded information-aware action scoring.",
+    whyUseIt: "Use this when you want the strongest practical post-pickup policy without reverting to omniscient planning or the old reveal model.",
+    decisionFlow: [
+      "Keep the same post-pickup-only sensing rule as the new robot specification.",
+      "Flush held locks cleanly and preserve bus-style batching where it obviously saves travel.",
+      "Compare lock opening, resource harvest, and scoring actions using bounded value-of-information heuristics.",
+      "Use deductions from observed pickups when the remaining legal layouts make unseen colors certain.",
+      "Prefer the next action that balances movement efficiency, immediate score, and information gain."
+    ],
+    strengths: [
+      "Most strategically ambitious policy under the realistic post-pickup sensing rule.",
+      "Can outperform the simpler observed-only bus by valuing informative pickups properly.",
+      "Keeps logic lighter than a full planner handoff."
+    ],
+    watchouts: [
+      "Most complex of the realistic hidden-layout policies.",
+      "Harder to debug if too many heuristics pile up.",
+      "Needs careful benchmarking to justify the extra complexity."
     ]
   },
   ValueAware_Deadline: {
@@ -795,10 +864,6 @@ function emptyVisualState(): VisualState {
 
 function getPolicyByName(name: string): StrategyPolicy {
   return ALL_POLICIES.find((p) => p.name === name) ?? AdaptiveSafePolicy;
-}
-
-function clampLayoutId(value: number): number {
-  return Math.max(0, Math.min(575, Number.isFinite(value) ? Math.floor(value) : 0));
 }
 
 function syncLayoutIdFromSeed(): void {
@@ -1385,40 +1450,20 @@ function updateRandomizationPanel(result: SimulationResult | null, snapshot: Pol
 }
 
 function summarizeBatch(items: BatchResult[]): void {
-  if (items.length === 0) {
-    batchEl.textContent = "(run batch to view ranking)";
-    return;
-  }
-  batchEl.textContent = items
-    .sort((a, b) => b.mean_score - a.mean_score)
-    .map(
-      (r, i) =>
-        `${i + 1}. ${r.policy_name}\n  source=${r.batch_source}\n  runs=${r.runs}\n  mean_score=${r.mean_score}\n  completion=${r.completion_rate}%\n  mean_time=${r.mean_time_s}s p50=${r.p50_time_s}s p90=${r.p90_time_s}s\n  violations=${r.violations_count}`
-    )
-    .join("\n\n");
+  batchEl.textContent = formatBatchRankingPanel(items);
 }
 
 function currentComparisonContext(): SingleSourceComparisonContext {
-  const exact = batchSourceSelect.value === "exact_layout_sweep";
-  if (exact) {
-    const layoutId = clampLayoutId(Number(layoutIdInput.value));
-    layoutIdInput.value = String(layoutId);
-    return {
-      mode: "exact_layout_sweep",
-      seed: null,
-      layout_id: layoutId
-    };
+  const resolved = resolveSingleSourceComparisonContext(
+    batchSourceSelect.value as BatchSourceMode,
+    Number(seedInput.value),
+    Number(layoutIdInput.value)
+  );
+  seedInput.value = String(resolved.normalizedSeed);
+  if (resolved.context.mode === "exact_layout_sweep") {
+    layoutIdInput.value = String(resolved.normalizedLayoutInput);
   }
-
-  const seed = Math.max(1, Number(seedInput.value) || 1);
-  seedInput.value = String(seed);
-  const layoutId = layoutIdForSeed(seed);
-  layoutIdInput.value = String(layoutId);
-  return {
-    mode: "seed_sampling",
-    seed,
-    layout_id: layoutId
-  };
+  return resolved.context;
 }
 
 function updateSingleSourceComparisonPanel(): void {

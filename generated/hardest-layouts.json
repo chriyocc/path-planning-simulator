@@ -1,0 +1,223 @@
+{
+  "generated_at": "2026-04-04",
+  "methodology": {
+    "source": "exact_layout_sweep",
+    "layout_count": 576,
+    "policies": [
+      "Optimal_Omniscient",
+      "Inference_ExpectedValue",
+      "BusRoute_Parametric",
+      "Bus_RevealedAfterPickup",
+      "Inference_BusHybrid"
+    ],
+    "ranking": "highest mean completion time across selected policies"
+  },
+  "hardest_by_mean": [
+    {
+      "layout_id": 111,
+      "mean_time_s": 222.07,
+      "p50_time_s": 228.99,
+      "max_time_s": 240.59,
+      "min_time_s": 197.26,
+      "spread_s": 43.33,
+      "slowest_policy": "Inference_BusHybrid",
+      "slowest_time_s": 240.59,
+      "fastest_policy": "Optimal_Omniscient",
+      "fastest_time_s": 197.26
+    },
+    {
+      "layout_id": 69,
+      "mean_time_s": 221.76,
+      "p50_time_s": 228.99,
+      "max_time_s": 239.44,
+      "min_time_s": 197.26,
+      "spread_s": 42.18,
+      "slowest_policy": "Inference_BusHybrid",
+      "slowest_time_s": 239.44,
+      "fastest_policy": "Optimal_Omniscient",
+      "fastest_time_s": 197.26
+    },
+    {
+      "layout_id": 553,
+      "mean_time_s": 221.52,
+      "p50_time_s": 231.45,
+      "max_time_s": 234.69,
+      "min_time_s": 187.65,
+      "spread_s": 47.04,
+      "slowest_policy": "Inference_BusHybrid",
+      "slowest_time_s": 234.69,
+      "fastest_policy": "Optimal_Omniscient",
+      "fastest_time_s": 187.65
+    },
+    {
+      "layout_id": 212,
+      "mean_time_s": 221.17,
+      "p50_time_s": 229.24,
+      "max_time_s": 234.74,
+      "min_time_s": 192.07,
+      "spread_s": 42.67,
+      "slowest_policy": "BusRoute_Parametric",
+      "slowest_time_s": 234.74,
+      "fastest_policy": "Optimal_Omniscient",
+      "fastest_time_s": 192.07
+    },
+    {
+      "layout_id": 408,
+      "mean_time_s": 221.13,
+      "p50_time_s": 231.45,
+      "max_time_s": 233.54,
+      "min_time_s": 187.65,
+      "spread_s": 45.89,
+      "slowest_policy": "Inference_BusHybrid",
+      "slowest_time_s": 233.54,
+      "fastest_policy": "Optimal_Omniscient",
+      "fastest_time_s": 187.65
+    },
+    {
+      "layout_id": 567,
+      "mean_time_s": 221.06,
+      "p50_time_s": 223.49,
+      "max_time_s": 240.19,
+      "min_time_s": 191.09,
+      "spread_s": 49.1,
+      "slowest_policy": "BusRoute_Parametric",
+      "slowest_time_s": 240.19,
+      "fastest_policy": "Optimal_Omniscient",
+      "fastest_time_s": 191.09
+    },
+    {
+      "layout_id": 429,
+      "mean_time_s": 220.9,
+      "p50_time_s": 222.34,
+      "max_time_s": 240.19,
+      "min_time_s": 191.09,
+      "spread_s": 49.1,
+      "slowest_policy": "BusRoute_Parametric",
+      "slowest_time_s": 240.19,
+      "fastest_policy": "Optimal_Omniscient",
+      "fastest_time_s": 191.09
+    },
+    {
+      "layout_id": 254,
+      "mean_time_s": 220.78,
+      "p50_time_s": 229.24,
+      "max_time_s": 234.74,
+      "min_time_s": 191.3,
+      "spread_s": 43.44,
+      "slowest_policy": "BusRoute_Parametric",
+      "slowest_time_s": 234.74,
+      "fastest_policy": "Optimal_Omniscient",
+      "fastest_time_s": 191.3
+    },
+    {
+      "layout_id": 529,
+      "mean_time_s": 220.56,
+      "p50_time_s": 228.15,
+      "max_time_s": 229.24,
+      "min_time_s": 198.91,
+      "spread_s": 30.33,
+      "slowest_policy": "Inference_BusHybrid",
+      "slowest_time_s": 229.24,
+      "fastest_policy": "Optimal_Omniscient",
+      "fastest_time_s": 198.91
+    },
+    {
+      "layout_id": 552,
+      "mean_time_s": 220.32,
+      "p50_time_s": 227.03,
+      "max_time_s": 233.54,
+      "min_time_s": 197.26,
+      "spread_s": 36.28,
+      "slowest_policy": "Inference_BusHybrid",
+      "slowest_time_s": 233.54,
+      "fastest_policy": "Optimal_Omniscient",
+      "fastest_time_s": 197.26
+    },
+    {
+      "layout_id": 234,
+      "mean_time_s": 220.25,
+      "p50_time_s": 223.68,
+      "max_time_s": 230.99,
+      "min_time_s": 197.26,
+      "spread_s": 33.73,
+      "slowest_policy": "BusRoute_Parametric",
+      "slowest_time_s": 230.99,
+      "fastest_policy": "Optimal_Omniscient",
+      "fastest_time_s": 197.26
+    },
+    {
+      "layout_id": 49,
+      "mean_time_s": 220.17,
+      "p50_time_s": 227.03,
+      "max_time_s": 240.19,
+      "min_time_s": 192.95,
+      "spread_s": 47.24,
+      "slowest_policy": "BusRoute_Parametric",
+      "slowest_time_s": 240.19,
+      "fastest_policy": "Optimal_Omniscient",
+      "fastest_time_s": 192.95
+    }
+  ],
+  "per_policy_hardest": {
+    "Optimal_Omniscient": [
+      { "layout_id": 16, "time_s": 198.91 },
+      { "layout_id": 46, "time_s": 198.91 },
+      { "layout_id": 61, "time_s": 198.91 },
+      { "layout_id": 84, "time_s": 198.91 },
+      { "layout_id": 92, "time_s": 198.91 },
+      { "layout_id": 115, "time_s": 198.91 },
+      { "layout_id": 134, "time_s": 198.91 },
+      { "layout_id": 138, "time_s": 198.91 }
+    ],
+    "Inference_ExpectedValue": [
+      { "layout_id": 514, "time_s": 229.7 },
+      { "layout_id": 46, "time_s": 228.84 },
+      { "layout_id": 368, "time_s": 228.55 },
+      { "layout_id": 382, "time_s": 228.55 },
+      { "layout_id": 520, "time_s": 228.55 },
+      { "layout_id": 16, "time_s": 227.69 },
+      { "layout_id": 157, "time_s": 225.75 },
+      { "layout_id": 160, "time_s": 225.75 }
+    ],
+    "BusRoute_Parametric": [
+      { "layout_id": 48, "time_s": 240.19 },
+      { "layout_id": 49, "time_s": 240.19 },
+      { "layout_id": 96, "time_s": 240.19 },
+      { "layout_id": 97, "time_s": 240.19 },
+      { "layout_id": 423, "time_s": 240.19 },
+      { "layout_id": 429, "time_s": 240.19 },
+      { "layout_id": 567, "time_s": 240.19 },
+      { "layout_id": 573, "time_s": 240.19 }
+    ],
+    "Bus_RevealedAfterPickup": [
+      { "layout_id": 423, "time_s": 240.19 },
+      { "layout_id": 429, "time_s": 240.19 },
+      { "layout_id": 567, "time_s": 240.19 },
+      { "layout_id": 573, "time_s": 240.19 },
+      { "layout_id": 206, "time_s": 234.74 },
+      { "layout_id": 212, "time_s": 234.74 },
+      { "layout_id": 254, "time_s": 234.74 },
+      { "layout_id": 260, "time_s": 234.74 }
+    ],
+    "Inference_BusHybrid": [
+      { "layout_id": 61, "time_s": 240.59 },
+      { "layout_id": 63, "time_s": 240.59 },
+      { "layout_id": 109, "time_s": 240.59 },
+      { "layout_id": 111, "time_s": 240.59 },
+      { "layout_id": 67, "time_s": 239.44 },
+      { "layout_id": 69, "time_s": 239.44 },
+      { "layout_id": 115, "time_s": 239.44 },
+      { "layout_id": 117, "time_s": 239.44 }
+    ]
+  },
+  "recurring_stress_layouts": [
+    { "layout_id": 429, "hits": 3 },
+    { "layout_id": 567, "hits": 3 },
+    { "layout_id": 49, "hits": 2 },
+    { "layout_id": 61, "hits": 2 },
+    { "layout_id": 69, "hits": 2 },
+    { "layout_id": 111, "hits": 2 },
+    { "layout_id": 212, "hits": 2 },
+    { "layout_id": 254, "hits": 2 }
+  ]
+}

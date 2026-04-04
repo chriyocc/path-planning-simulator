@@ -1,6 +1,10 @@
 import type {
   Action,
   BranchId,
+  Observation,
+  PolicyDecision,
+  PolicyStatusSnapshot,
+  PolicyTraceEvent,
   BranchOrderMode,
   PolicyOverrides,
   RoundState,
@@ -11,6 +15,16 @@ import { computeOptimalPolicy, computeOptimalPolicyLiFo } from "./planner";
 import { GraphRouter } from "./router";
 export { InferenceExpectedValuePolicy } from "./inferencePolicy";
 import { InferenceExpectedValuePolicy } from "./inferencePolicy";
+export {
+  BusRevealedAfterPickupDeductivePolicy,
+  BusRevealedAfterPickupPolicy,
+  InferenceBusHybridPolicy
+} from "./postPickupPolicies";
+import {
+  BusRevealedAfterPickupDeductivePolicy,
+  BusRevealedAfterPickupPolicy,
+  InferenceBusHybridPolicy
+} from "./postPickupPolicies";
 
 const BRANCHES: BranchId[] = ["RED", "YELLOW", "BLUE", "GREEN"];
 const FIXED_BRANCH_ORDER: BranchId[] = ["YELLOW", "BLUE", "GREEN", "RED"];
@@ -398,6 +412,113 @@ function fixedRouteActionCore(
 
 let optimalPathCache: Action[] | null = null;
 let currentPlanIndex = 0;
+let busShouldFinishCheapRemainingCargo = false;
+let busCheapRemainingCargoColor: Exclude<Action["color"], undefined> | null = null;
+
+function cheapRemainingCargoThresholdS(): number {
+  return 14;
+}
+
+function busPolicySnapshot(action: Action, state: RoundState, notes: string[] = []): PolicyStatusSnapshot {
+  const currentStep = action.type === "PICK_LOCK"
+    ? `Pick ${action.branchId ?? "branch"} black lock`
+    : action.type === "DROP_LOCK"
+      ? `Drop ${action.branchId ?? "held"} black lock`
+      : action.type === "PICK_RESOURCE"
+        ? `Pick ${action.slotNodeId ?? "resource"}`
+        : action.type === "DROP_RESOURCE"
+          ? `Drop ${action.color ?? "resource"}`
+          : action.type === "RETURN_START"
+            ? "Return to start"
+            : action.type === "MOVE_TO"
+              ? `Move to ${action.targetNodeId ?? "target"}`
+              : "End round";
+  const locks = state.holding_locks_for_branches.length > 0
+    ? state.holding_locks_for_branches.join(", ")
+    : "none";
+  const resources = state.inventory.length > 0
+    ? state.inventory.map((item) => `${item.color}:${item.sourceBranch}`).join(", ")
+    : "none";
+
+  return {
+    current_step: currentStep,
+    next_step: "Re-evaluate after current step",
+    holding: `locks=[${locks}] resources=[${resources}]`,
+    knowledge_summary: "knowledge: not used by this policy",
+    candidate_count: null,
+    layout_locked: false,
+    policy_notes: notes,
+    known_slots: null
+  };
+}
+
+function busDecisionCore(
+  state: RoundState,
+  observation: Observation,
+  config: SimulationConfig
+): Action {
+  const router = new GraphRouter(config.map, config.robot);
+  const held = heldLocks(state);
+
+  if (held.length > 0) {
+    if (held.length === 1 && state.inventory.length === 0 && config.robot.carry_capacity >= 2) {
+      const candidate = chooseNextLocked(state, config, router, "value", 0, held);
+      if (candidate && shouldChainSecondLockBeforeDrop(state, config, router, held[0], candidate)) {
+        return { type: "PICK_LOCK", branchId: candidate };
+      }
+    }
+    return { type: "DROP_LOCK", branchId: held[0] };
+  }
+
+  const immediateDrop = dropColorAtCurrentZone(state, config);
+  if (immediateDrop) {
+    return immediateDrop;
+  }
+
+  if (busShouldFinishCheapRemainingCargo && state.inventory.length === 1) {
+    const remainingColor = state.inventory[0].color;
+    if (remainingColor !== "BLACK" && busCheapRemainingCargoColor === remainingColor) {
+      const remainingDropCost =
+        travelSeconds(router, state.current_node, config.map.colorZoneNodeIds[remainingColor]) + config.robot.drop_s;
+      busShouldFinishCheapRemainingCargo = false;
+      busCheapRemainingCargoColor = null;
+      if (remainingDropCost <= cheapRemainingCargoThresholdS()) {
+        return { type: "DROP_RESOURCE", color: remainingColor };
+      }
+    } else {
+      busShouldFinishCheapRemainingCargo = false;
+      busCheapRemainingCargoColor = null;
+    }
+  }
+
+  const nextLocked = chooseNextLocked(state, config, router, "value");
+  if (nextLocked) {
+    return { type: "PICK_LOCK", branchId: nextLocked };
+  }
+
+  if (state.inventory.length >= config.robot.carry_capacity) {
+    return chooseDropColor(state, config, router, "value");
+  }
+
+  const pick = chooseNextPick(state, config, router, "value");
+  if (pick) {
+    return pick;
+  }
+
+  if (state.inventory.length > 0) {
+    return chooseDropColor(state, config, router, "value");
+  }
+
+  if (state.placed_resources.length === 8) {
+    return maybeReturnOrEnd(state, config);
+  }
+
+  if (observation.remaining_time_s < 12) {
+    return { type: "END_ROUND" };
+  }
+
+  return { type: "END_ROUND" };
+}
 
 export const OptimalOmniscientPolicy: StrategyPolicy = {
   name: "Optimal_Omniscient",
@@ -457,51 +578,42 @@ export const BaselineSingleCarryPolicy: StrategyPolicy = {
 export const BusRouteParametricPolicy: StrategyPolicy = {
   name: "BusRoute_Parametric",
   nextAction(state, observation, config) {
-    const router = new GraphRouter(config.map, config.robot);
-    const held = heldLocks(state);
-
-    if (held.length > 0) {
-      if (held.length === 1 && state.inventory.length === 0 && config.robot.carry_capacity >= 2) {
-        const candidate = chooseNextLocked(state, config, router, "value", 0, held);
-        if (candidate && shouldChainSecondLockBeforeDrop(state, config, router, held[0], candidate)) {
-          return { type: "PICK_LOCK", branchId: candidate };
-        }
-      }
-      return { type: "DROP_LOCK", branchId: held[0] };
+    if (state.time_elapsed_s === 0) {
+      busShouldFinishCheapRemainingCargo = false;
+      busCheapRemainingCargoColor = null;
     }
-
-    const immediateDrop = dropColorAtCurrentZone(state, config);
-    if (immediateDrop) {
-      return immediateDrop;
+    return busDecisionCore(state, observation, config);
+  },
+  decide(state, observation, config): PolicyDecision {
+    if (state.time_elapsed_s === 0) {
+      busShouldFinishCheapRemainingCargo = false;
+      busCheapRemainingCargoColor = null;
     }
-
-    const nextLocked = chooseNextLocked(state, config, router, "value");
-    if (nextLocked) {
-      return { type: "PICK_LOCK", branchId: nextLocked };
-    }
-
-    if (state.inventory.length >= config.robot.carry_capacity) {
-      return chooseDropColor(state, config, router, "value");
-    }
-
-    const pick = chooseNextPick(state, config, router, "value");
-    if (pick) {
-      return pick;
-    }
-
-    if (state.inventory.length > 0) {
-      return chooseDropColor(state, config, router, "value");
-    }
-
-    if (state.placed_resources.length === 8) {
-      return maybeReturnOrEnd(state, config);
-    }
-
-    if (observation.remaining_time_s < 12) {
-      return { type: "END_ROUND" };
-    }
-
-    return { type: "END_ROUND" };
+    const action = busDecisionCore(state, observation, config);
+    const notes =
+      busShouldFinishCheapRemainingCargo && state.inventory.length === 1
+        ? ["Prefer finishing a cheap remaining carried color after the last drop"]
+        : [];
+    return { action, snapshot: busPolicySnapshot(action, state, notes) };
+  },
+  onTraceStep(state, event, _config): PolicyStatusSnapshot {
+    busShouldFinishCheapRemainingCargo = Boolean(
+      event.action.type === "DROP_RESOURCE" &&
+      state.inventory.length === 1 &&
+      state.inventory[0]?.color !== "BLACK"
+    );
+    busCheapRemainingCargoColor = busShouldFinishCheapRemainingCargo
+      ? state.inventory[0].color as Exclude<Action["color"], undefined>
+      : null;
+    return busPolicySnapshot(
+      event.action,
+      state,
+      busShouldFinishCheapRemainingCargo
+        ? ["Finish the cheap remaining carried color before reopening new lock work"]
+        : event.note
+          ? [event.note]
+          : []
+    );
   }
 };
 
@@ -896,6 +1008,9 @@ export function withPolicyOverrides(basePolicy: StrategyPolicy, overrides?: Part
 export const ALL_POLICIES: StrategyPolicy[] = [
   BaselineSingleCarryPolicy,
   BusRouteParametricPolicy,
+  BusRevealedAfterPickupPolicy,
+  BusRevealedAfterPickupDeductivePolicy,
+  InferenceBusHybridPolicy,
   ValueAwareDeadlinePolicy,
   AdaptiveSafePolicy,
   FixedRouteCapacity2Policy,

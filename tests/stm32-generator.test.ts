@@ -5,6 +5,7 @@ import { GraphRouter } from "../src/router";
 import { createDefaultSimulationConfig } from "../src/simulator";
 import {
   MAX_PLAN_ACTIONS,
+  buildPlanForLayout,
   buildStm32TablesData,
   enumerateLegalLayouts,
   renderStm32Tables
@@ -222,5 +223,19 @@ describe("stm32 table generation", () => {
     });
 
     expect(hasDifferentLayout).toBe(true);
+  });
+
+  it("bus-route generated plans honor the post-drop cheap-cargo follow-up rule", () => {
+    const graph = createDefaultGraph();
+    const config = createDefaultSimulationConfig(graph);
+    const layout = enumerateLegalLayouts()[0];
+    const plan = buildPlanForLayout(config, layout, "bus_route");
+
+    const hasDropDropSequence = plan.actions.some((action, index) =>
+      action.type === "DROP_RESOURCE" &&
+      plan.actions[index + 1]?.type === "DROP_RESOURCE"
+    );
+
+    expect(hasDropDropSequence).toBe(true);
   });
 });

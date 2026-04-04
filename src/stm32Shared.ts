@@ -272,6 +272,15 @@ function buildPolicyPlan(config: SimulationConfig, initialState: RoundState, pol
     }
     actions.push(action);
     applyPolicyAction(state, action, router, config);
+    policy.onTraceStep?.(
+      state,
+      {
+        action,
+        note: action.type === "DROP_RESOURCE" && action.color ? `dropped_${action.color}` : "",
+        reveals: []
+      },
+      config
+    );
   }
 
   return actions;

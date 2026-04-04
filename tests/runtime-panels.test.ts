@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { formatPolicyStatusPanel, formatRandomizationPanel, formatSingleSourceComparisonPanel } from "../src/runtimePanels";
-import type { PolicyStatusSnapshot, SimulationResult } from "../src/types";
+import {
+  formatBatchRankingPanel,
+  formatPolicyStatusPanel,
+  formatRandomizationPanel,
+  formatSingleSourceComparisonPanel
+} from "../src/runtimePanels";
+import type { BatchResult, PolicyStatusSnapshot, SimulationResult } from "../src/types";
 
 const snapshot: PolicyStatusSnapshot = {
   current_step: "Pick YELLOW black lock",
@@ -106,5 +111,51 @@ describe("runtime panel formatting", () => {
     expect(text).toContain("1. Optimal_Omniscient");
     expect(text).toContain("2. BusRoute_Parametric");
     expect(text).toContain("time=187.67s");
+  });
+
+  it("ranks batch results by legality, completion, score, p90, and mean time rather than mean time alone", () => {
+    const entries: BatchResult[] = [
+      {
+        policy_name: "FastButRisky",
+        batch_source: "exact_layout_sweep",
+        runs: 576,
+        mean_score: 495,
+        completion_rate: 100,
+        mean_time_s: 210,
+        p50_time_s: 205,
+        p90_time_s: 270,
+        violations_count: 0,
+        top_samples: []
+      },
+      {
+        policy_name: "StableAndLegal",
+        batch_source: "exact_layout_sweep",
+        runs: 576,
+        mean_score: 495,
+        completion_rate: 100,
+        mean_time_s: 214,
+        p50_time_s: 212,
+        p90_time_s: 225,
+        violations_count: 0,
+        top_samples: []
+      },
+      {
+        policy_name: "FasterButIllegal",
+        batch_source: "exact_layout_sweep",
+        runs: 576,
+        mean_score: 495,
+        completion_rate: 100,
+        mean_time_s: 180,
+        p50_time_s: 178,
+        p90_time_s: 190,
+        violations_count: 2,
+        top_samples: []
+      }
+    ];
+
+    const text = formatBatchRankingPanel(entries);
+    expect(text).toContain("1. StableAndLegal");
+    expect(text).toContain("2. FastButRisky");
+    expect(text).toContain("3. FasterButIllegal");
   });
 });
